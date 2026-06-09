@@ -1839,61 +1839,10 @@ const triggerSet: TriggerSet<Data> = {
       },
       delaySeconds: 0.1, // Delay for party headmarker collect
       durationSeconds: 9,
-      infoText: (data, matches, output) => {
-        if (data.triggerSetConfig.forsaken === 'steal-fire') {
-          updatePathOfLightInitialAssignments(data);
-          const call = getStealFireTowerOneOutput(data.myPathOfLightInitialAssignment);
-          return output[call]!();
-        }
-
-        const marker = pathOfLightMarkerById[matches.id];
-        if (marker === undefined)
-          return;
-
-        if (marker === 'stack') {
-          if (data.triggerSetConfig.forsaken === 'kroxy-rinon') {
-            if (data.role === 'healer' || data.role === 'tank')
-              return output.stackOnYouTower!({
-                tower: output.leftTower!(),
-                marker: output.stackOnYou!(),
-              });
-            return output.stackOnYouTower!({
-              tower: output.rightTower!(),
-              marker: output.stackOnYou!(),
-            });
-          }
-          return output.stackOnYouTower!({
-            tower: output.tower!(),
-            marker: output.stackOnYou!(),
-          });
-        }
-
-        const stack1 = data.pathOfLightStackPlayers[0] ?? 'unknown';
-        const stack2 = data.pathOfLightStackPlayers[1] ?? 'unknown';
-        const stack1IsDPS = data.party.isDPS(stack1);
-        const stack2IsDPS = data.party.isDPS(stack2);
-        const myRoleIsDPS = data.party.isDPS(data.me);
-
-        // If both stack players are the same role, output both players
-        if (myRoleIsDPS === stack1IsDPS && myRoleIsDPS === stack2IsDPS) {
-          const players = data.pathOfLightStackPlayers.map(
-            (player) => {
-              return data.party.member(player);
-            },
-          );
-          const msg = players?.join(', ');
-          return output.markerOnYouStacksOnPlayers!({
-            marker: output[marker]!(),
-            stacks: output.stacksOnPlayers!({ players: msg }),
-          });
-        }
-
-        // Our partner will be the role that matches us
-        const possiblePartner = data.party.member(myRoleIsDPS === stack1IsDPS ? stack1 : stack2);
-        return output.markerOnYouStacksOnPlayers!({
-          marker: output[marker]!(),
-          stacks: output.stackOnPlayer!({ player: possiblePartner }),
-        });
+      infoText: (data, _matches, output) => {
+        updatePathOfLightInitialAssignments(data);
+        const call = getStealFireTowerOneOutput(data.myPathOfLightInitialAssignment);
+        return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
     },
@@ -1933,56 +1882,16 @@ const triggerSet: TriggerSet<Data> = {
         if (marker === undefined)
           return;
 
-        if (data.triggerSetConfig.forsaken === 'steal-fire') {
-          if (data.myPathOfLightInitialAssignment?.group !== '1238')
-            return;
-          const secondMarker = data.myPathOfLights[1] ?? marker;
-          const call = getStealFireTowerTwoOutput(secondMarker);
-          return output[call]!();
-        }
-
-        // Unsure that this could happen, unless more than 4 players soaked?
-        if (marker === 'stack')
+        if (data.myPathOfLightInitialAssignment?.group !== '1238')
           return;
-
-        // Ignoring stack players that didn't soak tower 1
-        // Check our previous headmarker
-        if (data.myPathOfLights[0] === 'cone')
-          return output.mechs!({
-            mech1: output.tower!(),
-            mech2: output.beFar!(),
-          });
-        if (data.myPathOfLights[0] === 'spread')
-          return output.mechs!({
-            mech1: output.swapTowers!(),
-            mech2: output.beFar!(),
-          });
+        const secondMarker = data.myPathOfLights[1] ?? marker;
+        const call = getStealFireTowerTwoOutput(secondMarker);
+        return output[call]!();
       },
       outputStrings: {
         leftTowerInsidePairBait: forsakenOutputStrings.leftTowerInsidePairBait!,
         rightTowerInsideSpread: forsakenOutputStrings.rightTowerInsideSpread!,
         unknown: Outputs.unknown,
-        tower: Outputs.getTowers,
-        swapTowers: {
-          en: 'Swap Towers',
-          cn: '换塔',
-        },
-        beNear: {
-          en: 'Be Near',
-          de: 'Sei Nahe',
-          cn: '站近',
-          ko: '가까이 있기',
-        },
-        beFar: {
-          en: 'Be Far',
-          de: 'Sei Fern',
-          cn: '站远',
-          ko: '멀리 있기',
-        },
-        mechs: {
-          en: '${mech1} + ${mech2}',
-          cn: '${mech1} + ${mech2}',
-        },
       },
     },
     {
@@ -2002,22 +1911,13 @@ const triggerSet: TriggerSet<Data> = {
       durationSeconds: 9,
       suppressSeconds: 1,
       infoText: (data, _matches, output) => {
-        if (data.triggerSetConfig.forsaken === 'steal-fire') {
-          const assignment = data.myPathOfLightInitialAssignment;
-          if (assignment?.group === '4567') {
-            const call = getStealFireTowerTwoBaitOutput(assignment.slot);
-            return output[call]!();
-          }
-          if (assignment?.group === 'unknown')
-            return output.unknown!();
-          return;
+        const assignment = data.myPathOfLightInitialAssignment;
+        if (assignment?.group === '4567') {
+          const call = getStealFireTowerTwoBaitOutput(assignment.slot);
+          return output[call]!();
         }
-
-        // Ignoring stack players that didn't soak tower 1
-        if (data.myPathOfLights.length !== 1 || data.myPathOfLights[0] === 'stack')
-          return;
-
-        return output.bait!();
+        if (assignment?.group === 'unknown')
+          return output.unknown!();
       },
       outputStrings: {
         leftUpBait: forsakenOutputStrings.leftUpBait!,
@@ -2025,10 +1925,6 @@ const triggerSet: TriggerSet<Data> = {
         rightUpBait: forsakenOutputStrings.rightUpBait!,
         rightDownBait: forsakenOutputStrings.rightDownBait!,
         unknown: Outputs.unknown,
-        bait: {
-          en: 'Bait cone Left/Right or clone far',
-          cn: '左右引导扇形，或远离分身',
-        },
       },
     },
     {
