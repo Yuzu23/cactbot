@@ -46,6 +46,14 @@ type PathOfLightTowerOneOutput =
   | 'leftTowerOutsideLeft'
   | 'leftTowerOutsideDownBait'
   | 'unknown';
+type PathOfLightTowerTwoOutput =
+  | 'leftTowerInsidePairBait'
+  | 'rightTowerInsideSpread'
+  | 'leftUpBait'
+  | 'leftDownBait'
+  | 'rightUpBait'
+  | 'rightDownBait'
+  | 'unknown';
 type SlotConfigId =
   | 'partySlotMT'
   | 'partySlotST'
@@ -399,6 +407,37 @@ const getStealFireTowerOneOutput = (
   }
 };
 
+const getStealFireTowerTwoOutput = (
+  marker: PathOfLightMarker,
+): PathOfLightTowerTwoOutput => {
+  if (marker === 'cone')
+    return 'leftTowerInsidePairBait';
+  if (marker === 'spread')
+    return 'rightTowerInsideSpread';
+  return 'unknown';
+};
+
+const getStealFireTowerTwoBaitOutput = (
+  slot: PartySlot | undefined,
+): PathOfLightTowerTwoOutput => {
+  switch (slot) {
+    case 'MT':
+    case 'ST':
+      return 'leftUpBait';
+    case 'H1':
+    case 'H2':
+      return 'leftDownBait';
+    case 'D1':
+    case 'D2':
+      return 'rightUpBait';
+    case 'D3':
+    case 'D4':
+      return 'rightDownBait';
+    default:
+      return 'unknown';
+  }
+};
+
 const mysteryMagicOutputStrings: OutputStrings = {
   puddle: {
     en: 'Bait Puddle',
@@ -542,6 +581,30 @@ const forsakenOutputStrings: OutputStrings = {
   leftTowerOutsideDownBait: {
     en: 'Left Tower, Outside Down Bait',
     cn: '左塔外下引导',
+  },
+  leftTowerInsidePairBait: {
+    en: 'Left Tower, Inside Pair Bait',
+    cn: '左塔内互射',
+  },
+  rightTowerInsideSpread: {
+    en: 'Right Tower, Inside Spread',
+    cn: '右塔内分散',
+  },
+  leftUpBait: {
+    en: 'Upper Left Bait',
+    cn: '左上引导',
+  },
+  leftDownBait: {
+    en: 'Lower Left Bait',
+    cn: '左下引导',
+  },
+  rightUpBait: {
+    en: 'Upper Right Bait',
+    cn: '右上引导',
+  },
+  rightDownBait: {
+    en: 'Lower Right Bait',
+    cn: '右下引导',
   },
   stackOnYou: Outputs.stackOnYou,
   cone: {
@@ -1866,18 +1929,17 @@ const triggerSet: TriggerSet<Data> = {
       delaySeconds: 0.1, // Delay for party headmarker collect
       durationSeconds: 9,
       infoText: (data, matches, output) => {
-        const id = matches.id;
-        type markerMap = {
-          [key: string]: 'stack' | 'cone' | 'spread';
-        };
-        const markers: markerMap = {
-          '02CB': 'stack',
-          '02CD': 'cone',
-          '02CC': 'spread',
-        };
-        const marker = markers[id];
+        const marker = pathOfLightMarkerById[matches.id];
         if (marker === undefined)
           return;
+
+        if (data.triggerSetConfig.forsaken === 'steal-fire') {
+          if (data.myPathOfLightInitialAssignment?.group !== '1238')
+            return;
+          const secondMarker = data.myPathOfLights[1] ?? marker;
+          const call = getStealFireTowerTwoOutput(secondMarker);
+          return output[call]!();
+        }
 
         // Unsure that this could happen, unless more than 4 players soaked?
         if (marker === 'stack')
@@ -1897,6 +1959,9 @@ const triggerSet: TriggerSet<Data> = {
           });
       },
       outputStrings: {
+        leftTowerInsidePairBait: forsakenOutputStrings.leftTowerInsidePairBait!,
+        rightTowerInsideSpread: forsakenOutputStrings.rightTowerInsideSpread!,
+        unknown: Outputs.unknown,
         tower: Outputs.getTowers,
         swapTowers: {
           en: 'Swap Towers',
@@ -1937,6 +2002,17 @@ const triggerSet: TriggerSet<Data> = {
       durationSeconds: 9,
       suppressSeconds: 1,
       infoText: (data, _matches, output) => {
+        if (data.triggerSetConfig.forsaken === 'steal-fire') {
+          const assignment = data.myPathOfLightInitialAssignment;
+          if (assignment?.group === '4567') {
+            const call = getStealFireTowerTwoBaitOutput(assignment.slot);
+            return output[call]!();
+          }
+          if (assignment?.group === 'unknown')
+            return output.unknown!();
+          return;
+        }
+
         // Ignoring stack players that didn't soak tower 1
         if (data.myPathOfLights.length !== 1 || data.myPathOfLights[0] === 'stack')
           return;
@@ -1944,6 +2020,11 @@ const triggerSet: TriggerSet<Data> = {
         return output.bait!();
       },
       outputStrings: {
+        leftUpBait: forsakenOutputStrings.leftUpBait!,
+        leftDownBait: forsakenOutputStrings.leftDownBait!,
+        rightUpBait: forsakenOutputStrings.rightUpBait!,
+        rightDownBait: forsakenOutputStrings.rightDownBait!,
+        unknown: Outputs.unknown,
         bait: {
           en: 'Bait cone Left/Right or clone far',
           cn: '左右引导扇形，或远离分身',
