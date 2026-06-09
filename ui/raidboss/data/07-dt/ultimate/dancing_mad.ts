@@ -1,9 +1,11 @@
 import Conditions from '../../../../../resources/conditions';
 import Outputs from '../../../../../resources/outputs';
+import { callOverlayHandler } from '../../../../../resources/overlay_plugin_api';
 import { Responses } from '../../../../../resources/responses';
 import Util from '../../../../../resources/util';
 import ZoneId from '../../../../../resources/zone_id';
 import { RaidbossData } from '../../../../../types/data';
+import { PluginCombatantState } from '../../../../../types/event';
 import { Job } from '../../../../../types/job';
 import { OutputStrings, TriggerSet } from '../../../../../types/trigger';
 
@@ -19,20 +21,9 @@ const phases: { [id: string]: Phase } = {
 type ForsakenStrategy = 'steal-fire' | 'kroxy-rinon' | 'none';
 type PartySlot = 'MT' | 'ST' | 'H1' | 'H2' | 'D1' | 'D2' | 'D3' | 'D4';
 type PathOfLightMarker = 'stack' | 'cone' | 'spread' | 'unknown';
-type PathOfLightInitialGroup = '1238' | '4567' | 'unknown';
-type PathOfLightInitialDetail =
-  | 'selfStackPartnerCone'
-  | 'selfStackPartnerSpread'
-  | 'selfConePartnerStack'
-  | 'selfSpreadPartnerStack'
-  | 'selfConePartnerCone'
-  | 'selfSpreadPartnerSpread'
-  | 'unknown';
-type PathOfLightInitialAssignment = {
-  group: PathOfLightInitialGroup;
-  detail: PathOfLightInitialDetail;
-  myMarker: PathOfLightMarker;
-  partnerMarker: PathOfLightMarker;
+type PathOfLightGroup = '1238' | '4567' | 'unknown';
+type PathOfLightAssignment = {
+  group: PathOfLightGroup;
   partner: string | undefined;
   partnerSlot: PartySlot | undefined;
   slot: PartySlot | undefined;
@@ -182,8 +173,8 @@ const jobAliases: { [jobName: string]: Job } = {
   画家: 'PCT',
 };
 
-// const centerX = 100;
-// const centerY = 100;
+const centerX = 100;
+const centerY = 100;
 
 export interface Data extends RaidbossData {
   readonly triggerSetConfig: {
@@ -228,8 +219,9 @@ export interface Data extends RaidbossData {
   pathOfLightConePlayers: string[];
   pathOfLightSpreadPlayers: string[];
   pathOfLightMarkerByPlayer: { [name: string]: PathOfLightMarker };
-  pathOfLightInitialAssignmentByPlayer: { [name: string]: PathOfLightInitialAssignment };
-  myPathOfLightInitialAssignment?: PathOfLightInitialAssignment;
+  pathOfLightAssignmentByPlayer: { [name: string]: PathOfLightAssignment };
+  myPathOfLightAssignment?: PathOfLightAssignment;
+  pathOfLightStackCombatants: PluginCombatantState[];
   myPathOfLights: PathOfLightMarker[];
   partySlotByPlayer: { [name: string]: PartySlot };
   partySlotAssignments: Partial<Record<PartySlot, string>>;
@@ -325,59 +317,62 @@ const assignPartySlots = (data: Data): void => {
   data.myPartySlot = slotByPlayer[data.me];
 };
 
-const getPathOfLightInitialAssignment = (
+const getPathOfLightMarker = (
+  data: Data,
+  player: string | undefined,
+): PathOfLightMarker => {
+  if (player === undefined)
+    return 'unknown';
+  return data.pathOfLightMarkerByPlayer[player] ?? 'unknown';
+};
+
+const getPathOfLightAssignment = (
   data: Data,
   player: string,
-): PathOfLightInitialAssignment => {
+): PathOfLightAssignment => {
   const slot = data.partySlotByPlayer[player];
   const partnerSlot = slot === undefined ? undefined : pathOfLightPartnerSlots[slot];
   const partner = partnerSlot === undefined ? undefined : data.partySlotAssignments[partnerSlot];
-  const myMarker = data.pathOfLightMarkerByPlayer[player] ?? 'unknown';
-  const partnerMarker = partner === undefined
-    ? 'unknown'
-    : data.pathOfLightMarkerByPlayer[partner] ?? 'unknown';
   const base = {
-    myMarker,
     partner,
-    partnerMarker,
     partnerSlot,
     slot,
   };
 
   if (slot === undefined || partnerSlot === undefined || partner === undefined)
-    return { ...base, group: 'unknown', detail: 'unknown' };
+    return { ...base, group: 'unknown' };
 
+  const myMarker = getPathOfLightMarker(data, player);
+  const partnerMarker = getPathOfLightMarker(data, partner);
   if (myMarker === 'unknown' || partnerMarker === 'unknown')
-    return { ...base, group: 'unknown', detail: 'unknown' };
+    return { ...base, group: 'unknown' };
 
-  if (myMarker === 'stack' && partnerMarker === 'cone')
-    return { ...base, group: '1238', detail: 'selfStackPartnerCone' };
-  if (myMarker === 'stack' && partnerMarker === 'spread')
-    return { ...base, group: '1238', detail: 'selfStackPartnerSpread' };
-  if (myMarker === 'cone' && partnerMarker === 'stack')
-    return { ...base, group: '1238', detail: 'selfConePartnerStack' };
-  if (myMarker === 'spread' && partnerMarker === 'stack')
-    return { ...base, group: '1238', detail: 'selfSpreadPartnerStack' };
+  if (
+    (myMarker === 'stack' && partnerMarker !== 'stack') ||
+    (myMarker !== 'stack' && partnerMarker === 'stack')
+  )
+    return { ...base, group: '1238' };
 
-  if (myMarker === 'cone' && partnerMarker === 'cone')
-    return { ...base, group: '4567', detail: 'selfConePartnerCone' };
-  if (myMarker === 'spread' && partnerMarker === 'spread')
-    return { ...base, group: '4567', detail: 'selfSpreadPartnerSpread' };
+  if (
+    (myMarker === 'cone' && partnerMarker === 'cone') ||
+    (myMarker === 'spread' && partnerMarker === 'spread')
+  )
+    return { ...base, group: '4567' };
 
-  return { ...base, group: 'unknown', detail: 'unknown' };
+  return { ...base, group: 'unknown' };
 };
 
-const updatePathOfLightInitialAssignments = (data: Data): void => {
+const updatePathOfLightAssignments = (data: Data): void => {
   if (data.partySlotByPlayer[data.me] === undefined)
     assignPartySlots(data);
 
-  data.pathOfLightInitialAssignmentByPlayer = {};
+  data.pathOfLightAssignmentByPlayer = {};
   for (const player of data.party.partyNames)
-    data.pathOfLightInitialAssignmentByPlayer[player] = getPathOfLightInitialAssignment(
+    data.pathOfLightAssignmentByPlayer[player] = getPathOfLightAssignment(
       data,
       player,
     );
-  data.myPathOfLightInitialAssignment = data.pathOfLightInitialAssignmentByPlayer[data.me];
+  data.myPathOfLightAssignment = data.pathOfLightAssignmentByPlayer[data.me];
 };
 
 const isPathOfLightMeleeSlot = (slot: PartySlot | undefined): boolean => {
@@ -385,26 +380,29 @@ const isPathOfLightMeleeSlot = (slot: PartySlot | undefined): boolean => {
 };
 
 const getStealFireTowerOneOutput = (
-  assignment: PathOfLightInitialAssignment | undefined,
+  data: Data,
+  assignment: PathOfLightAssignment | undefined,
 ): PathOfLightTowerOneOutput => {
-  switch (assignment?.detail) {
-    case 'selfStackPartnerCone':
-      return 'leftTowerInsideLeft';
-    case 'selfStackPartnerSpread':
-      return 'rightTowerInsideRight';
-    case 'selfSpreadPartnerStack':
-      return 'rightTowerInsideLeft';
-    case 'selfConePartnerStack':
-      return 'leftTowerInsideUpDown';
-    case 'selfSpreadPartnerSpread':
-      return 'rightTowerOutsideRightStack';
-    case 'selfConePartnerCone':
-      return isPathOfLightMeleeSlot(assignment.slot)
-        ? 'leftTowerOutsideLeft'
-        : 'leftTowerOutsideDownBait';
-    default:
-      return 'unknown';
-  }
+  if (assignment === undefined)
+    return 'unknown';
+
+  const myMarker = getPathOfLightMarker(data, data.me);
+  const partnerMarker = getPathOfLightMarker(data, assignment.partner);
+  if (myMarker === 'stack' && partnerMarker === 'cone')
+    return 'leftTowerInsideLeft';
+  if (myMarker === 'stack' && partnerMarker === 'spread')
+    return 'rightTowerInsideRight';
+  if (myMarker === 'spread' && partnerMarker === 'stack')
+    return 'rightTowerInsideLeft';
+  if (myMarker === 'cone' && partnerMarker === 'stack')
+    return 'leftTowerInsideUpDown';
+  if (myMarker === 'spread' && partnerMarker === 'spread')
+    return 'rightTowerOutsideRightStack';
+  if (myMarker === 'cone' && partnerMarker === 'cone')
+    return isPathOfLightMeleeSlot(assignment.slot)
+      ? 'leftTowerOutsideLeft'
+      : 'leftTowerOutsideDownBait';
+  return 'unknown';
 };
 
 const getStealFireTowerTwoOutput = (
@@ -436,6 +434,61 @@ const getStealFireTowerTwoBaitOutput = (
     default:
       return 'unknown';
   }
+};
+
+const collectPathOfLightStackCombatants = async (data: Data): Promise<void> => {
+  data.pathOfLightStackCombatants = [];
+  if (getPathOfLightMarker(data, data.me) !== 'stack')
+    return;
+
+  const otherStack = data.pathOfLightStackPlayers.find((player) => player !== data.me);
+  if (otherStack === undefined)
+    return;
+
+  data.pathOfLightStackCombatants = (await callOverlayHandler({
+    call: 'getCombatants',
+    names: [data.me, otherStack],
+  })).combatants;
+};
+
+const getStealFireOddTowerStackOutput = (
+  data: Data,
+): PathOfLightTowerOneOutput => {
+  const otherStack = data.pathOfLightStackPlayers.find((player) => player !== data.me);
+  if (otherStack === undefined)
+    return 'unknown';
+
+  const myCombatant = data.pathOfLightStackCombatants.find(
+    (combatant) => combatant.Name === data.me,
+  );
+  const otherCombatant = data.pathOfLightStackCombatants.find(
+    (combatant) => combatant.Name === otherStack,
+  );
+  if (myCombatant === undefined || otherCombatant === undefined)
+    return 'unknown';
+
+  const myX = myCombatant.PosX - centerX;
+  const myY = myCombatant.PosY - centerY;
+  const otherX = otherCombatant.PosX - centerX;
+  const otherY = otherCombatant.PosY - centerY;
+  const cross = myX * otherY - myY * otherX;
+
+  if (Math.abs(cross) < 0.001)
+    return 'unknown';
+  return cross > 0 ? 'rightTowerInsideRight' : 'leftTowerInsideLeft';
+};
+
+const getStealFireOddTowerOutput = (
+  data: Data,
+): PathOfLightTowerOneOutput => {
+  const marker = getPathOfLightMarker(data, data.me);
+  if (marker === 'stack')
+    return getStealFireOddTowerStackOutput(data);
+  if (marker === 'cone')
+    return 'leftTowerInsideUpDown';
+  if (marker === 'spread')
+    return 'rightTowerInsideLeft';
+  return 'unknown';
 };
 
 const mysteryMagicOutputStrings: OutputStrings = {
@@ -556,27 +609,27 @@ const forsakenOutputStrings: OutputStrings = {
   },
   leftTowerInsideLeft: {
     en: 'Left Tower, Inside Left',
-    cn: '左塔内左',
+    cn: '左塔内左分摊',
   },
   rightTowerInsideRight: {
     en: 'Right Tower, Inside Right',
-    cn: '右塔内右',
+    cn: '右塔内右分摊',
   },
   rightTowerInsideLeft: {
     en: 'Right Tower, Inside Left',
-    cn: '右塔内左',
+    cn: '右塔内左分散',
   },
   leftTowerInsideUpDown: {
     en: 'Left Tower, Inside Up/Down',
-    cn: '左塔内上下',
+    cn: '左塔内下分散',
   },
   rightTowerOutsideRightStack: {
     en: 'Right Tower, Outside Right Stack',
-    cn: '右塔外右分摊',
+    cn: '右塔外分摊',
   },
   leftTowerOutsideLeft: {
     en: 'Left Tower, Outside Left',
-    cn: '左塔外左',
+    cn: '左塔外左分摊',
   },
   leftTowerOutsideDownBait: {
     en: 'Left Tower, Outside Down Bait',
@@ -774,7 +827,8 @@ const triggerSet: TriggerSet<Data> = {
       pathOfLightConePlayers: [],
       pathOfLightSpreadPlayers: [],
       pathOfLightMarkerByPlayer: {},
-      pathOfLightInitialAssignmentByPlayer: {},
+      pathOfLightAssignmentByPlayer: {},
+      pathOfLightStackCombatants: [],
       partySlotByPlayer: {},
       partySlotAssignments: {},
     };
@@ -1840,8 +1894,8 @@ const triggerSet: TriggerSet<Data> = {
       delaySeconds: 0.1, // Delay for party headmarker collect
       durationSeconds: 9,
       infoText: (data, _matches, output) => {
-        updatePathOfLightInitialAssignments(data);
-        const call = getStealFireTowerOneOutput(data.myPathOfLightInitialAssignment);
+        updatePathOfLightAssignments(data);
+        const call = getStealFireTowerOneOutput(data, data.myPathOfLightAssignment);
         return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
@@ -1857,7 +1911,7 @@ const triggerSet: TriggerSet<Data> = {
       run: (data) => data.pathOfLightCounter = data.pathOfLightCounter + 1,
     },
     {
-      id: 'DMU P2 Path of Light Towers 2',
+      id: 'DMU P2 Path of Light Tower 2 1238',
       // This set should not contain stack markers
       // If stacks exist, they came from first set
       // 2 Cones and 2 Spreads will soak towers
@@ -1872,20 +1926,21 @@ const triggerSet: TriggerSet<Data> = {
         ],
         capture: true,
       },
-      condition: (data, matches) => {
-        return data.me === matches.target && data.pathOfLightCounter === 2;
-      },
+      condition: (data, matches) => data.me === matches.target && data.pathOfLightCounter === 2,
       delaySeconds: 0.1, // Delay for party headmarker collect
       durationSeconds: 9,
       infoText: (data, matches, output) => {
+        const assignment = data.myPathOfLightAssignment;
+        if (assignment?.group !== '1238') {
+          if (assignment?.group === 'unknown')
+            return output.unknown!();
+          return;
+        }
+
         const marker = pathOfLightMarkerById[matches.id];
         if (marker === undefined)
-          return;
-
-        if (data.myPathOfLightInitialAssignment?.group !== '1238')
-          return;
-        const secondMarker = data.myPathOfLights[1] ?? marker;
-        const call = getStealFireTowerTwoOutput(secondMarker);
+          return output.unknown!();
+        const call = getStealFireTowerTwoOutput(marker);
         return output[call]!();
       },
       outputStrings: {
@@ -1895,8 +1950,8 @@ const triggerSet: TriggerSet<Data> = {
       },
     },
     {
-      id: 'DMU P2 Path of Light Towers 2 Baits',
-      // Players that still have the first headmarker
+      id: 'DMU P2 Path of Light Tower 2 4567',
+      // 4567 keeps the first headmarker here.
       type: 'HeadMarker',
       netRegex: {
         id: [
@@ -1911,7 +1966,7 @@ const triggerSet: TriggerSet<Data> = {
       durationSeconds: 9,
       suppressSeconds: 1,
       infoText: (data, _matches, output) => {
-        const assignment = data.myPathOfLightInitialAssignment;
+        const assignment = data.myPathOfLightAssignment;
         if (assignment?.group === '4567') {
           const call = getStealFireTowerTwoBaitOutput(assignment.slot);
           return output[call]!();
@@ -1942,73 +1997,87 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         future: {
           en: 'Bait Ending opposite Towers',
-          cn: '去塔对面引导结末',
+          cn: '正面引导',
         },
         past: {
           en: 'Bait Ending between Towers',
-          cn: '去塔中间引导结末',
+          cn: '背面引导',
         },
       },
     },
     {
-      id: 'DMU P2 Path of Light Towers 3',
+      id: 'DMU P2 Path of Light Tower 3 1238',
       // BADC All Things Ending (Future)
       // BADD All Things Ending (Past)
       // There should be two stacks, a cone and an aoe
       type: 'StartsUsing',
       netRegex: { id: ['BADC', 'BADD'], source: 'Kefka', capture: false },
-      condition: (data) => data.pathOfLightCounter === 3,
+      condition: (data) =>
+        data.pathOfLightCounter === 3 && data.myPathOfLightAssignment?.group === '1238',
       suppressSeconds: 1,
+      promise: collectPathOfLightStackCombatants,
       alertText: (data, _matches, output) => {
-        // Tower soak group A will be at 3
-        if (data.myPathOfLights.length === 3) {
-          const marker = data.myPathOfLights[2] ?? 'unknown';
-          if (marker === 'stack') {
-            // Need to know for priority
-            const players = data.pathOfLightStackPlayers.map(
-              (player) => {
-                if (player === data.me)
-                  return 'YOU';
-                return data.party.member(player);
-              },
-            );
-            const msg = players?.join(', ');
-            return output.markerOnYouTower!({
-              marker: output.stacksOnPlayers!({ players: msg }),
-              tower: output.tower!(),
-            });
-          }
-
-          if (data.triggerSetConfig.forsaken === 'kroxy-rinon') {
-            return output.markerOnYouTower!({
-              marker: output[marker]!(),
-              tower: marker === 'cone'
-                ? output.leftTower!()
-                : output.rightTower!(),
-            });
-          }
-          return output.markerOnYouTower!({
-            marker: output[marker]!(),
-            tower: output.tower!(),
-          });
-        }
-
-        // No tower has been soaked
-        if (data.myPathOfLights.length === 1) {
-          if (data.role === 'healer' || data.role === 'tank')
-            return output.leftStack!();
-          return output.rightStack!();
-        }
+        const call = getStealFireOddTowerOutput(data);
+        return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
     },
     {
-      id: 'DMU P2 Path of Light Towers 4',
+      id: 'DMU P2 Path of Light Tower 3 4567',
+      // 4567 keeps the previous headmarker here.
+      type: 'StartsUsing',
+      netRegex: { id: ['BADC', 'BADD'], source: 'Kefka', capture: false },
+      condition: (data) =>
+        data.pathOfLightCounter === 3 && data.myPathOfLightAssignment?.group === '4567',
+      suppressSeconds: 1,
+      alertText: (data, _matches, output) => {
+        const call = getStealFireTowerOneOutput(data, data.myPathOfLightAssignment);
+        return output[call]!();
+      },
+      outputStrings: forsakenOutputStrings,
+    },
+    {
+      id: 'DMU P2 Path of Light Tower 4 4567',
       // This set should not contain stack markers
       // If stacks exist, they came from first set
       // 2 Cones and 2 Spreads will soak towers
       //
       // Headmarkers come out ~2s before Future's/Past's End
+      type: 'HeadMarker',
+      netRegex: {
+        id: [
+          headMarkerData['stackPath'],
+          headMarkerData['conePath'],
+          headMarkerData['spreadPath'],
+        ],
+        capture: true,
+      },
+      condition: (data, matches) => data.me === matches.target && data.pathOfLightCounter === 4,
+      delaySeconds: 0.1, // Delay for party headmarker collect
+      durationSeconds: 9,
+      infoText: (data, matches, output) => {
+        const assignment = data.myPathOfLightAssignment;
+        if (assignment?.group !== '4567') {
+          if (assignment?.group === 'unknown')
+            return output.unknown!();
+          return;
+        }
+
+        const marker = pathOfLightMarkerById[matches.id];
+        if (marker === undefined)
+          return output.unknown!();
+        const call = getStealFireTowerTwoOutput(marker);
+        return output[call]!();
+      },
+      outputStrings: {
+        leftTowerInsidePairBait: forsakenOutputStrings.leftTowerInsidePairBait!,
+        rightTowerInsideSpread: forsakenOutputStrings.rightTowerInsideSpread!,
+        unknown: Outputs.unknown,
+      },
+    },
+    {
+      id: 'DMU P2 Path of Light Tower 4 1238',
+      // 1238 keeps the previous headmarker here.
       type: 'HeadMarker',
       netRegex: {
         id: [
@@ -2023,122 +2092,50 @@ const triggerSet: TriggerSet<Data> = {
       durationSeconds: 9,
       suppressSeconds: 1,
       infoText: (data, _matches, output) => {
-        // Handle second group's first towers
-        if (data.myPathOfLights.length === 1) {
-          const marker = data.myPathOfLights[0];
-          // If someone has stack from beginning
-          if (marker === 'stack' || marker === 'unknown')
-            return;
-
-          if (data.triggerSetConfig.forsaken === 'kroxy-rinon') {
-            const tower = data.role === 'tank' || Util.isMeleeDpsJob(data.job)
-              ? 'rightTower'
-              : 'leftTower';
-            if (marker === 'cone')
-              return output.mechs!({
-                mech1: output[tower]!(),
-                mech2: output.beNear!(),
-              });
-            if (marker === 'spread')
-              return output.mechs!({
-                mech1: output[tower]!(),
-                mech2: output.beFar!(),
-              });
-          }
-          if (marker === 'cone')
-            return output.mechs!({
-              mech1: output.tower!(),
-              mech2: output.beNear!(),
-            });
-          if (marker === 'spread')
-            return output.mechs!({
-              mech1: output.tower!(),
-              mech2: output.beFar!(),
-            });
+        const assignment = data.myPathOfLightAssignment;
+        if (assignment?.group === '1238') {
+          const call = getStealFireTowerTwoBaitOutput(assignment.slot);
+          return output[call]!();
         }
-        return output.bait!();
+        if (assignment?.group === 'unknown')
+          return output.unknown!();
       },
       outputStrings: {
-        tower: Outputs.getTowers,
-        leftTower: {
-          en: 'Left Tower',
-          cn: '左塔',
-        },
-        rightTower: {
-          en: 'Right Tower',
-          cn: '右塔',
-        },
-        beNear: {
-          en: 'Be Near',
-          de: 'Sei Nahe',
-          cn: '站近',
-          ko: '가까이 있기',
-        },
-        beFar: {
-          en: 'Be Far',
-          de: 'Sei Fern',
-          cn: '站远',
-          ko: '멀리 있기',
-        },
-        mechs: {
-          en: '${mech1} + ${mech2}',
-          cn: '${mech1} + ${mech2}',
-        },
-        bait: {
-          en: 'Bait cone Left/Right or clone far',
-          cn: '左右引导扇形，或远离分身',
-        },
+        leftUpBait: forsakenOutputStrings.leftUpBait!,
+        leftDownBait: forsakenOutputStrings.leftDownBait!,
+        rightUpBait: forsakenOutputStrings.rightUpBait!,
+        rightDownBait: forsakenOutputStrings.rightDownBait!,
+        unknown: Outputs.unknown,
       },
     },
     {
-      id: 'DMU P2 Path of Light Towers 5',
+      id: 'DMU P2 Path of Light Tower 5 4567',
       // BADC All Things Ending (Future)
       // BADD All Things Ending (Past)
       // There should be two stacks, a cone and an aoe
       type: 'StartsUsing',
       netRegex: { id: ['BADC', 'BADD'], source: 'Kefka', capture: false },
-      condition: (data) => data.pathOfLightCounter === 5,
+      condition: (data) =>
+        data.pathOfLightCounter === 5 && data.myPathOfLightAssignment?.group === '4567',
+      suppressSeconds: 1,
+      promise: collectPathOfLightStackCombatants,
+      alertText: (data, _matches, output) => {
+        const call = getStealFireOddTowerOutput(data);
+        return output[call]!();
+      },
+      outputStrings: forsakenOutputStrings,
+    },
+    {
+      id: 'DMU P2 Path of Light Tower 5 1238',
+      // 1238 keeps the previous headmarker here.
+      type: 'StartsUsing',
+      netRegex: { id: ['BADC', 'BADD'], source: 'Kefka', capture: false },
+      condition: (data) =>
+        data.pathOfLightCounter === 5 && data.myPathOfLightAssignment?.group === '1238',
       suppressSeconds: 1,
       alertText: (data, _matches, output) => {
-        // Tower soak group B will be at 2
-        if (data.myPathOfLights.length === 2) {
-          const marker = data.myPathOfLights[1] ?? 'unknown';
-          if (marker === 'stack') {
-            // Need to know for priority
-            const players = data.pathOfLightStackPlayers.map(
-              (player) => {
-                if (player === data.me)
-                  return 'YOU';
-                return data.party.member(player);
-              },
-            );
-            const msg = players?.join(', ');
-            return output.markerOnYouTower!({
-              marker: output.stacksOnPlayers!({ players: msg }),
-              tower: output.tower!(),
-            });
-          }
-
-          if (data.triggerSetConfig.forsaken === 'kroxy-rinon') {
-            return output.markerOnYouTower!({
-              marker: output[marker]!(),
-              tower: marker === 'cone'
-                ? output.leftTower!()
-                : output.rightTower!(),
-            });
-          }
-          return output.markerOnYouTower!({
-            marker: output[marker]!(),
-            tower: output.tower!(),
-          });
-        }
-
-        // Players that have soaked 3 towers
-        if (data.myPathOfLights.length === 4) {
-          if (data.role === 'healer' || data.role === 'tank')
-            return output.leftStack!();
-          return output.rightStack!();
-        }
+        const call = getStealFireTowerOneOutput(data, data.myPathOfLightAssignment);
+        return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
     },
