@@ -2,7 +2,6 @@ import Conditions from '../../../../../resources/conditions';
 import Outputs from '../../../../../resources/outputs';
 import { callOverlayHandler } from '../../../../../resources/overlay_plugin_api';
 import { Responses } from '../../../../../resources/responses';
-import Util from '../../../../../resources/util';
 import ZoneId from '../../../../../resources/zone_id';
 import { RaidbossData } from '../../../../../types/data';
 import { PluginCombatantState } from '../../../../../types/event';
@@ -2140,7 +2139,7 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: forsakenOutputStrings,
     },
     {
-      id: 'DMU P2 Path of Light Towers 6',
+      id: 'DMU P2 Path of Light Tower 6 4567',
       // This set should not contain stack markers
       // If stacks exist, they came from first set
       // 2 Cones and 2 Spreads will soak towers
@@ -2155,66 +2154,32 @@ const triggerSet: TriggerSet<Data> = {
         ],
         capture: true,
       },
-      condition: (data, matches) => {
-        return data.me === matches.target && data.pathOfLightCounter === 6;
-      },
+      condition: (data, matches) => data.me === matches.target && data.pathOfLightCounter === 6,
       delaySeconds: 0.1, // Delay for party headmarker collect
       durationSeconds: 9,
       infoText: (data, matches, output) => {
-        // If a player from Group A accidentally soaks
-        if (data.myPathOfLights.length !== 3)
+        const assignment = data.myPathOfLightAssignment;
+        if (assignment?.group !== '4567') {
+          if (assignment?.group === 'unknown')
+            return output.unknown!();
           return;
-        const id = matches.id;
-        type markerMap = {
-          [key: string]: 'stack' | 'cone' | 'spread';
-        };
-        const markers: markerMap = {
-          '02CB': 'stack',
-          '02CD': 'cone',
-          '02CC': 'spread',
-        };
-        const marker = markers[id];
+        }
+
+        const marker = pathOfLightMarkerById[matches.id];
         if (marker === undefined)
-          return;
-
-        // Unsure that this could happen, unless more than 4 players soaked?
-        if (marker === 'stack')
-          return;
-
-        if (marker === 'cone')
-          return output.mechs!({
-            mech1: output.tower!(),
-            mech2: output.beNear!(),
-          });
-        if (marker === 'spread')
-          return output.mechs!({
-            mech1: output.tower!(),
-            mech2: output.beFar!(),
-          });
+          return output.unknown!();
+        const call = getStealFireTowerTwoOutput(marker);
+        return output[call]!();
       },
       outputStrings: {
-        tower: Outputs.getTowers,
-        beNear: {
-          en: 'Be Near',
-          de: 'Sei Nahe',
-          cn: '站近',
-          ko: '가까이 있기',
-        },
-        beFar: {
-          en: 'Be Far',
-          de: 'Sei Fern',
-          cn: '站远',
-          ko: '멀리 있기',
-        },
-        mechs: {
-          en: '${mech1} + ${mech2}',
-          cn: '${mech1} + ${mech2}',
-        },
+        leftTowerInsidePairBait: forsakenOutputStrings.leftTowerInsidePairBait!,
+        rightTowerInsideSpread: forsakenOutputStrings.rightTowerInsideSpread!,
+        unknown: Outputs.unknown,
       },
     },
     {
-      id: 'DMU P2 Path of Light Towers 6 Baits',
-      // Players that still have the first headmarker
+      id: 'DMU P2 Path of Light Tower 6 1238',
+      // 1238 keeps the previous headmarker here.
       type: 'HeadMarker',
       netRegex: {
         id: [
@@ -2229,145 +2194,95 @@ const triggerSet: TriggerSet<Data> = {
       durationSeconds: 9,
       suppressSeconds: 1,
       infoText: (data, _matches, output) => {
-        if (data.myPathOfLights.length !== 4)
-          return;
-
-        return output.bait!();
+        const assignment = data.myPathOfLightAssignment;
+        if (assignment?.group === '1238') {
+          const call = getStealFireTowerTwoBaitOutput(assignment.slot);
+          return output[call]!();
+        }
+        if (assignment?.group === 'unknown')
+          return output.unknown!();
       },
       outputStrings: {
-        bait: {
-          en: 'Bait cone Left/Right or clone far',
-          cn: '左右引导扇形，或远离分身',
-        },
+        leftUpBait: forsakenOutputStrings.leftUpBait!,
+        leftDownBait: forsakenOutputStrings.leftDownBait!,
+        rightUpBait: forsakenOutputStrings.rightUpBait!,
+        rightDownBait: forsakenOutputStrings.rightDownBait!,
+        unknown: Outputs.unknown,
       },
     },
     {
-      id: 'DMU P2 Path of Light Towers 7',
-      // This set should not contain stack markers
-      // If stacks exist, they came from first set
-      // There should be two stacks, a cone and an aoe
-      //
-      // Headmarkers come out ~2s before Future's/Past's End
-      type: 'HeadMarker',
-      netRegex: {
-        id: [
-          headMarkerData['stackPath'],
-          headMarkerData['conePath'],
-          headMarkerData['spreadPath'],
-        ],
-        capture: false,
-      },
-      condition: (data) => data.pathOfLightCounter === 7,
-      delaySeconds: 0.1, // Delay for party headmarker collect
-      durationSeconds: 9,
-      infoText: (data, _matches, output) => {
-        // Both groups will be on their last soak
-        // Group B will have two stacks
-        const marker = data.myPathOfLights[4] ?? 'unknown';
-        if (marker === 'stack') {
-          // Need to know for priority
-          const players = data.pathOfLightStackPlayers.map(
-            (player) => {
-              if (player === data.me)
-                return 'YOU';
-              return data.party.member(player);
-            },
-          );
-          const msg = players?.join(', ');
-          return output.markerOnYouTower!({
-            marker: output.stacksOnPlayers!({ players: msg }),
-            tower: output.tower!(),
-          });
-        }
-        return output.groupBTowers!();
+      id: 'DMU P2 Path of Light Tower 7 4567',
+      // BADC All Things Ending (Future)
+      // BADD All Things Ending (Past)
+      // 4567 uses the latest headmarker here.
+      type: 'StartsUsing',
+      netRegex: { id: ['BADC', 'BADD'], source: 'Kefka', capture: false },
+      condition: (data) =>
+        data.pathOfLightCounter === 7 && data.myPathOfLightAssignment?.group === '4567',
+      suppressSeconds: 1,
+      promise: collectPathOfLightStackCombatants,
+      alertText: (data, _matches, output) => {
+        const call = getStealFireOddTowerOutput(data);
+        return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
     },
     {
-      id: 'DMU P2 Path of Light Towers 8',
-      // This set should not contain stack markers
-      // If stacks exist, they came from first set
-      // 2 Cones and 2 Spreads will soak towers
-      //
-      // Headmarkers come out ~2s before Future's/Past's End
-      type: 'HeadMarker',
-      netRegex: {
-        id: [
-          headMarkerData['stackPath'],
-          headMarkerData['conePath'],
-          headMarkerData['spreadPath'],
-        ],
-        capture: false,
+      id: 'DMU P2 Path of Light Tower 7 1238',
+      // 1238 keeps the previous headmarker here.
+      type: 'StartsUsing',
+      netRegex: { id: ['BADC', 'BADD'], source: 'Kefka', capture: false },
+      condition: (data) =>
+        data.pathOfLightCounter === 7 && data.myPathOfLightAssignment?.group === '1238',
+      suppressSeconds: 1,
+      alertText: (data, _matches, output) => {
+        const call = getStealFireTowerOneOutput(data, data.myPathOfLightAssignment);
+        return output[call]!();
       },
-      condition: (data) => data.pathOfLightCounter === 8,
-      delaySeconds: 0.1, // Delay for party headmarker collect
+      outputStrings: forsakenOutputStrings,
+    },
+    {
+      id: 'DMU P2 Path of Light Tower 8 1238',
+      // 1238 uses the latest headmarker from after tower 3.
+      type: 'Ability',
+      netRegex: { id: 'BABE', source: 'Kefka', capture: false },
+      condition: (data) =>
+        data.pathOfLightCounter === 8 && data.myPathOfLightAssignment?.group === '1238',
+      delaySeconds: 0.3,
       durationSeconds: 9,
+      suppressSeconds: 1,
       infoText: (data, _matches, output) => {
-        // Handle first group's last towers
-        if (data.myPathOfLights.length === 4) {
-          const marker = data.myPathOfLights[3];
-
-          if (marker === 'stack' || marker === 'unknown')
-            return;
-
-          if (data.triggerSetConfig.forsaken === 'kroxy-rinon') {
-            const tower = data.role === 'tank' || Util.isMeleeDpsJob(data.job)
-              ? 'rightTower'
-              : 'leftTower';
-            if (marker === 'cone')
-              return output.mechs!({
-                mech1: output[tower]!(),
-                mech2: output.beNear!(),
-              });
-            if (marker === 'spread')
-              return output.mechs!({
-                mech1: output[tower]!(),
-                mech2: output.beFar!(),
-              });
-          }
-          if (marker === 'cone')
-            return output.mechs!({
-              mech1: output.tower!(),
-              mech2: output.beNear!(),
-            });
-          if (marker === 'spread')
-            return output.mechs!({
-              mech1: output.tower!(),
-              mech2: output.beFar!(),
-            });
-        }
-        return output.bait!();
+        const marker = getPathOfLightMarker(data, data.me);
+        const call = getStealFireTowerTwoOutput(marker);
+        return output[call]!();
       },
       outputStrings: {
-        tower: Outputs.getTowers,
-        leftTower: {
-          en: 'Left Tower',
-          cn: '左塔',
-        },
-        rightTower: {
-          en: 'Right Tower',
-          cn: '右塔',
-        },
-        beNear: {
-          en: 'Be Near',
-          de: 'Sei Nahe',
-          cn: '站近',
-          ko: '가까이 있기',
-        },
-        beFar: {
-          en: 'Be Far',
-          de: 'Sei Fern',
-          cn: '站远',
-          ko: '멀리 있기',
-        },
-        mechs: {
-          en: '${mech1} + ${mech2}',
-          cn: '${mech1} + ${mech2}',
-        },
-        bait: {
-          en: 'Bait cone Left/Right or clone far',
-          cn: '左右引导扇形，或远离分身',
-        },
+        leftTowerInsidePairBait: forsakenOutputStrings.leftTowerInsidePairBait!,
+        rightTowerInsideSpread: forsakenOutputStrings.rightTowerInsideSpread!,
+        unknown: Outputs.unknown,
+      },
+    },
+    {
+      id: 'DMU P2 Path of Light Tower 8 4567',
+      // 4567 keeps the previous headmarker here.
+      type: 'Ability',
+      netRegex: { id: 'BABE', source: 'Kefka', capture: false },
+      condition: (data) =>
+        data.pathOfLightCounter === 8 && data.myPathOfLightAssignment?.group === '4567',
+      delaySeconds: 0.3,
+      durationSeconds: 9,
+      suppressSeconds: 1,
+      infoText: (data, _matches, output) => {
+        const assignment = data.myPathOfLightAssignment;
+        const call = getStealFireTowerTwoBaitOutput(assignment?.slot);
+        return output[call]!();
+      },
+      outputStrings: {
+        leftUpBait: forsakenOutputStrings.leftUpBait!,
+        leftDownBait: forsakenOutputStrings.leftDownBait!,
+        rightUpBait: forsakenOutputStrings.rightUpBait!,
+        rightDownBait: forsakenOutputStrings.rightDownBait!,
+        unknown: Outputs.unknown,
       },
     },
     {
