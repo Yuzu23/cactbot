@@ -513,19 +513,19 @@ const mysteryMagicOutputStrings: OutputStrings = {
   },
   trueThunder: {
     en: 'Avoid Tell',
-    cn: '避开直线',
+    cn: '安全区内',
   },
   fakeThunder: {
     en: 'In Line',
-    cn: '站直线内',
+    cn: '危险区内',
   },
   trueIce: {
     en: 'Avoid Tell',
-    cn: '避开扇形',
+    cn: '安全区',
   },
   fakeIce: {
     en: 'In Cone',
-    cn: '进入扇形',
+    cn: '危险区',
   },
   trueIcePuddle: {
     en: '${mech1} + ${mech2} => ${mech3}',
@@ -537,19 +537,19 @@ const mysteryMagicOutputStrings: OutputStrings = {
   },
   stackTrueIce: {
     en: '${mech} + ${ice}',
-    cn: '${mech} + ${ice}',
+    cn: '${ice} + ${mech}',
   },
   stackFakeIce: {
     en: '${mech} + ${ice}',
-    cn: '${mech} + ${ice}',
+    cn: '${ice} + ${mech}',
   },
   spreadTrueIce: {
     en: '${mech} + ${ice}',
-    cn: '${mech} + ${ice}',
+    cn: '${ice} + ${mech}',
   },
   spreadFakeIce: {
     en: '${mech} + ${ice}',
-    cn: '${mech} + ${ice}',
+    cn: '${ice} + ${mech}',
   },
   trueIceTrueThunder: {
     en: 'Avoid Tells',
@@ -569,19 +569,19 @@ const mysteryMagicOutputStrings: OutputStrings = {
   },
   stackTrueThunder: {
     en: '${mech} + ${thunder}',
-    cn: '${mech} + ${thunder}',
+    cn: '${thunder}${mech}',
   },
   stackFakeThunder: {
     en: '${mech} + ${thunder}',
-    cn: '${mech} + ${thunder}',
+    cn: '${thunder}${mech}',
   },
   spreadTrueThunder: {
     en: '${mech} + ${thunder}',
-    cn: '${mech} + ${thunder}',
+    cn: '${thunder}${mech}',
   },
   spreadFakeThunder: {
     en: '${mech} + ${thunder}',
-    cn: '${mech} + ${thunder}',
+    cn: '${thunder}${mech}',
   },
 };
 
@@ -596,6 +596,19 @@ const trapOutputStrings: OutputStrings = {
   },
 };
 
+const getDoubleTroubleTrapTargetsForRole = (data: Data): string[] => {
+  const isDpsGroup = data.role === 'dps';
+  return data.doubleTroubleTrapTargets.filter((player) => data.party.isDPS(player) === isDpsGroup);
+};
+
+const getDoubleTroubleTrapTargetNames = (data: Data) => {
+  return getDoubleTroubleTrapTargetsForRole(data).map((player) => {
+    if (player === data.me)
+      return 'YOU';
+    return data.party.member(player);
+  });
+};
+
 const forsakenOutputStrings: OutputStrings = {
   tower: Outputs.getTowers,
   leftTower: {
@@ -608,27 +621,27 @@ const forsakenOutputStrings: OutputStrings = {
   },
   leftTowerInsideLeft: {
     en: 'Left Tower, Inside Left',
-    cn: '左塔内左分摊',
+    cn: '左塔内左侧分摊',
   },
   rightTowerInsideRight: {
     en: 'Right Tower, Inside Right',
-    cn: '右塔内右分摊',
+    cn: '右塔内右侧分摊',
   },
   rightTowerInsideLeft: {
     en: 'Right Tower, Inside Left',
-    cn: '右塔内左分散',
+    cn: '右塔内左侧钢铁',
   },
   leftTowerInsideUpDown: {
     en: 'Left Tower, Inside Up/Down',
-    cn: '左塔内下分散',
+    cn: '左塔内下侧扇形',
   },
   rightTowerOutsideRightStack: {
     en: 'Right Tower, Outside Right Stack',
-    cn: '右塔外分摊',
+    cn: '右塔外右侧分摊',
   },
   leftTowerOutsideLeft: {
     en: 'Left Tower, Outside Left',
-    cn: '左塔外左分摊',
+    cn: '左塔外左侧分摊',
   },
   leftTowerOutsideDownBait: {
     en: 'Left Tower, Outside Down Bait',
@@ -636,27 +649,27 @@ const forsakenOutputStrings: OutputStrings = {
   },
   leftTowerInsidePairBait: {
     en: 'Left Tower, Inside Pair Bait',
-    cn: '左塔内互射',
+    cn: '左塔内对射',
   },
   rightTowerInsideSpread: {
     en: 'Right Tower, Inside Spread',
-    cn: '右塔内分散',
+    cn: '右塔内互相分散',
   },
   leftUpBait: {
     en: 'Upper Left Bait',
-    cn: '左上引导',
+    cn: '场中引导',
   },
   leftDownBait: {
     en: 'Lower Left Bait',
-    cn: '左下引导',
+    cn: '场中引导',
   },
   rightUpBait: {
     en: 'Upper Right Bait',
-    cn: '右上引导',
+    cn: '场中引导',
   },
   rightDownBait: {
     en: 'Lower Right Bait',
-    cn: '右下引导',
+    cn: '场中引导',
   },
   stackOnYou: Outputs.stackOnYou,
   cone: {
@@ -1116,21 +1129,6 @@ const triggerSet: TriggerSet<Data> = {
       suppressSeconds: 99999,
     },
     {
-      id: 'DMU P1 Wave Cannon',
-      // BAA8 Wave Cannon is an instant cast from Graven Image
-      // This gives a ~5 second warning to spread
-      type: 'ActorControlExtra',
-      netRegex: { category: '019D', param1: '40', param2: '80', capture: false },
-      suppressSeconds: 99999, // First instance is a blue tower
-      alertText: (_data, _matches, output) => output.waveCannonLine!(),
-      outputStrings: {
-        waveCannonLine: {
-          en: 'E/W Spread',
-          cn: '东西分散',
-        },
-      },
-    },
-    {
       id: 'DMU P1 Wave Cannon Collect',
       // Collect players hit by Wave Cannon to tell who soaks tower followup and who avoids tower
       type: 'Ability',
@@ -1206,14 +1204,13 @@ const triggerSet: TriggerSet<Data> = {
         // cactbot-builtin-response
         output.responseOutputStrings = trapOutputStrings;
 
-        const severity = data.doubleTroubleTrapTargets.includes(data.me) ? 'alertText' : 'infoText';
-        const players = data.doubleTroubleTrapTargets.map(
-          (player) => {
-            if (player === data.me)
-              return 'YOU';
-            return data.party.member(player);
-          },
-        );
+        const players = getDoubleTroubleTrapTargetNames(data);
+        if (players.length === 0)
+          return;
+
+        const severity = getDoubleTroubleTrapTargetsForRole(data).includes(data.me)
+          ? 'alertText'
+          : 'infoText';
         const msg = players?.join(', ');
         return { [severity]: output.knockbackFrom!({ players: msg }) };
       },
@@ -1244,13 +1241,10 @@ const triggerSet: TriggerSet<Data> = {
         if (data.doubleTroubleTrapTargets[0] === undefined)
           return;
 
-        const players = data.doubleTroubleTrapTargets.map(
-          (player) => {
-            if (player === data.me)
-              return 'YOU';
-            return data.party.member(player);
-          },
-        );
+        const players = getDoubleTroubleTrapTargetNames(data);
+        if (players.length === 0)
+          return;
+
         const msg = players?.join(', ');
         return output.knockbackFromLater!({ players: msg });
       },
@@ -1307,17 +1301,16 @@ const triggerSet: TriggerSet<Data> = {
         return false;
       },
       infoText: (data, _matches, output) => {
-        const hasVitrophyre = data.gravenImageTether === 'vitrophyre';
         return data.isIceTrue
           ? output.trueIcePuddle!({
             mech1: output.trueIce!(),
             mech2: output.puddle!(),
-            mech3: hasVitrophyre ? output.spread!() : output.middle!(),
+            mech3: output.spread!(),
           })
           : output.fakeIcePuddle!({
             mech1: output.fakeIce!(),
             mech2: output.puddle!(),
-            mech3: hasVitrophyre ? output.spread!() : output.middle!(),
+            mech3: output.spread!(),
           });
       },
       outputStrings: mysteryMagicOutputStrings,
@@ -1360,13 +1353,10 @@ const triggerSet: TriggerSet<Data> = {
         if (data.doubleTroubleTrapTargets[0] === undefined)
           return;
 
-        const players = data.doubleTroubleTrapTargets.map(
-          (player) => {
-            if (player === data.me)
-              return 'YOU';
-            return data.party.member(player);
-          },
-        );
+        const players = getDoubleTroubleTrapTargetNames(data);
+        if (players.length === 0)
+          return;
+
         const msg = players?.join(', ');
         return output.knockbackFromLater!({ players: msg });
       },
@@ -1413,7 +1403,7 @@ const triggerSet: TriggerSet<Data> = {
         if (x < 103 && x > 101) // Graven Image 2: Gravitas target
           return output.gravitas!({
             mech1: output.puddle!(),
-            mech2: output.middle!(),
+            mech2: output.spread!(),
           });
         if (x > 125) // Graven Image 2: Vitrophyre target
           return output.vitrophyre!({
@@ -1476,14 +1466,13 @@ const triggerSet: TriggerSet<Data> = {
         if (data.doubleTroubleTrapTargets[0] === undefined)
           return;
 
-        const severity = data.doubleTroubleTrapTargets.includes(data.me) ? 'alertText' : 'infoText';
-        const players = data.doubleTroubleTrapTargets.map(
-          (player) => {
-            if (player === data.me)
-              return 'YOU';
-            return data.party.member(player);
-          },
-        );
+        const players = getDoubleTroubleTrapTargetNames(data);
+        if (players.length === 0)
+          return;
+
+        const severity = getDoubleTroubleTrapTargetsForRole(data).includes(data.me)
+          ? 'alertText'
+          : 'infoText';
         const msg = players?.join(', ');
         return { [severity]: output.knockbackFrom!({ players: msg }) };
       },
@@ -1506,14 +1495,13 @@ const triggerSet: TriggerSet<Data> = {
         if (data.doubleTroubleTrapTargets[0] === undefined)
           return;
 
-        const severity = data.doubleTroubleTrapTargets.includes(data.me) ? 'alertText' : 'infoText';
-        const players = data.doubleTroubleTrapTargets.map(
-          (player) => {
-            if (player === data.me)
-              return 'YOU';
-            return data.party.member(player);
-          },
-        );
+        const players = getDoubleTroubleTrapTargetNames(data);
+        if (players.length === 0)
+          return;
+
+        const severity = getDoubleTroubleTrapTargetsForRole(data).includes(data.me)
+          ? 'alertText'
+          : 'infoText';
         const msg = players?.join(', ');
         return { [severity]: output.knockbackFrom!({ players: msg }) };
       },
@@ -1617,19 +1605,19 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         upup: {
           en: 'Up Portents',
-          cn: '上角边',
+          cn: '上',
         },
         downdown: {
           en: 'Down Portents',
-          cn: '下角边',
+          cn: '下',
         },
         rightright: {
           en: 'Right Portents',
-          cn: '右角边',
+          cn: '右',
         },
         leftleft: {
           en: 'Left Portents',
-          cn: '左角边',
+          cn: '左',
         },
         downleft: {
           en: 'Down => Left Portent',
