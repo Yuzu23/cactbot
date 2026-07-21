@@ -240,7 +240,7 @@ export interface Data extends RaidbossData {
   fireCrystalDirNum?: number;
   waterCrystalDirNum?: number;
   windCrystalDirNum?: number;
-  firstBlaster: number[];
+  firstBlasterHdg?: number;
   firstBlasterDirNum?: number;
   blasterRotation?: number;
   inLine: { [name: string]: number };
@@ -837,8 +837,28 @@ const forsakenOutputStrings: OutputStrings = {
   unknown: Outputs.unknown,
 };
 
+const p3IntercardMarkerOutputStrings: OutputStrings = {
+  dirNE: {
+    en: 'upper right',
+    cn: '右上',
+  },
+  dirSE: {
+    en: 'lower right',
+    cn: '右下',
+  },
+  dirSW: {
+    en: 'lower left',
+    cn: '左下',
+  },
+  dirNW: {
+    en: 'upper left',
+    cn: '左上',
+  },
+  unknown: Outputs.unknown,
+};
+
 const boaOutputStrings: OutputStrings = {
-  ...Directions.outputStringsIntercardDir,
+  ...p3IntercardMarkerOutputStrings,
   in: Outputs.in,
   out: Outputs.out,
   moveExdeathAndChaosThenMech: {
@@ -927,6 +947,26 @@ const boaOutputStrings: OutputStrings = {
     en: 'Be Near ${dir}',
     cn: '靠近${dir}',
   },
+  yeyinTlbFireOut: {
+    en: 'Fire Out',
+    cn: '火点名出去',
+  },
+  yeyinTlbGoFireCrystal: {
+    en: 'Go to Fire Crystal ${dir}',
+    cn: '去火水晶 ${dir}',
+  },
+  yeyinTlbStackMiddle: {
+    en: 'Stack Middle for Wind',
+    cn: '中间8人抱团吃风',
+  },
+  yeyinTlbD3BaitJump: {
+    en: 'D3 Bait Jump Opposite Fire ${dir}',
+    cn: 'D3去火水晶对侧 ${dir} 引导超级跳',
+  },
+  yeyinTlbDodgeJumpAtFireCrystal: {
+    en: 'Dodge Jump at Fire Crystal ${dir}',
+    cn: '火水晶 ${dir} 躲衰减',
+  },
   stackPartner: Outputs.stackPartner,
   donutLater: {
     en: 'Donut (later)',
@@ -992,6 +1032,8 @@ const blackHoleOutputStrings: OutputStrings = {
   },
 };
 
+const pendingNothingnessNum = (data: Data): number => data.nothingnessCount + 1;
+
 const sortTrineDirNumsByAPointCounterclockwise = (dirNums: number[]): number[] => {
   // A marker is north/12 o'clock. Direction numbers increase clockwise.
   return [...dirNums].sort((a, b) => ((16 - a) % 16) - ((16 - b) % 16));
@@ -1001,6 +1043,107 @@ const trineDirNumToOutputKey = (dirNum: number | undefined): string => {
   if (dirNum === undefined)
     return 'unknown';
   return Directions.output16Dir[dirNum] ?? 'unknown';
+};
+
+const ultimaBlasterMarkerLabels = [
+  'markerA',
+  'marker2',
+  'markerB',
+  'marker3',
+  'markerC',
+  'marker4',
+  'markerD',
+  'marker1',
+] as const;
+
+const ultimaBlasterMarker = (dirNum: number | undefined): string => {
+  if (dirNum === undefined)
+    return 'unknown';
+  return ultimaBlasterMarkerLabels[dirNum] ?? 'unknown';
+};
+
+const ultimaBlasterMarkerOutputStrings: OutputStrings = {
+  markerA: {
+    en: 'A',
+    cn: 'A点',
+  },
+  marker1: {
+    en: '1',
+    cn: '1点',
+  },
+  markerB: {
+    en: 'B',
+    cn: 'B点',
+  },
+  marker2: {
+    en: '2',
+    cn: '2点',
+  },
+  markerC: {
+    en: 'C',
+    cn: 'C点',
+  },
+  marker3: {
+    en: '3',
+    cn: '3点',
+  },
+  markerD: {
+    en: 'D',
+    cn: 'D点',
+  },
+  marker4: {
+    en: '4',
+    cn: '4点',
+  },
+  unknown: Outputs.unknown,
+};
+
+const ultimaBlasterMarkerBetween = (dirNum: number | undefined): string => {
+  if (dirNum === undefined || dirNum % 2 === 0)
+    return 'unknown';
+
+  const marker1 = ultimaBlasterMarkerLabels[(dirNum + 15) / 2 % 8] ?? 'unknown';
+  const marker2 = ultimaBlasterMarkerLabels[(dirNum + 1) / 2 % 8] ?? 'unknown';
+  if (marker1 === 'unknown' || marker2 === 'unknown')
+    return 'unknown';
+
+  return `${marker1}_${marker2}`;
+};
+
+const ultimaBlasterMarkerBetweenOutputStrings: OutputStrings = {
+  markerA_marker2: {
+    en: 'A/2',
+    cn: 'A2中间',
+  },
+  marker2_markerB: {
+    en: '2/B',
+    cn: '2B中间',
+  },
+  markerB_marker3: {
+    en: 'B/3',
+    cn: 'B3中间',
+  },
+  marker3_markerC: {
+    en: '3/C',
+    cn: '3C中间',
+  },
+  markerC_marker4: {
+    en: 'C/4',
+    cn: 'C4中间',
+  },
+  marker4_markerD: {
+    en: '4/D',
+    cn: '4D中间',
+  },
+  markerD_marker1: {
+    en: 'D/1',
+    cn: 'D1中间',
+  },
+  marker1_markerA: {
+    en: '1/A',
+    cn: '1A中间',
+  },
+  unknown: Outputs.unknown,
 };
 
 const triggerSet: TriggerSet<Data> = {
@@ -1109,9 +1252,13 @@ const triggerSet: TriggerSet<Data> = {
       id: 'boa',
       comment: {
         en:
-          `Tank LB3: Ranged players bait Short => Long Crystal, party resolves debuffs at Wind Crystal. Role stack the wind baits after Vacuum Wave<br />
+          `Yeyin TLB: Fire debuffs out, everyone else to fire crystal, D3 baits jump, then party stacks middle for wind with Tank LB3<br />
         Entropy/Dynamic Fluid Bait (Default): Follows SG3K Raidplan: Entropy/Fluid bait their crystals and get hit by crystal's aoe<br />
         None: Only calls debuffs and locations`,
+        cn:
+          `夜音式TLB：火点名出去，其他人去火水晶，D3引导超级跳，真空波后中间8人抱团吃风，坦克LB3<br />
+        火水点名引导：按SG3K Raidplan处理火水点名<br />
+        通用播报：只报点名和位置`,
       },
       name: {
         en: 'P3 Bowels of Agony Strategy',
@@ -1120,17 +1267,17 @@ const triggerSet: TriggerSet<Data> = {
       type: 'select',
       options: {
         en: {
-          'Tank LB3': 'lb3',
+          'Yeyin TLB': 'lb3',
           'Entropy/Dynamic Fluid Bait': 'sg3k',
           'Generic Calls': 'none',
         },
         cn: {
-          '坦克LB3': 'lb3',
+          '夜音式TLB': 'lb3',
           '火水点名引导': 'sg3k',
           '通用播报': 'none',
         },
       },
-      default: 'sg3k',
+      default: 'lb3',
     },
     {
       id: 'accretion',
@@ -1210,7 +1357,6 @@ const triggerSet: TriggerSet<Data> = {
       windCrystalNext: false,
       fireElementPlayers: [],
       waterElementPlayers: [],
-      firstBlaster: [],
       inLine: {},
       hadAccretion: false,
       blackHoleIdDirNums: {},
@@ -2802,10 +2948,12 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         epic: {
           en: 'Attack Chaos',
+          cn: '攻击卡奥斯',
           ko: '카오스 공격',
         },
         fated: {
           en: 'Attack Exdeath',
+          cn: '攻击艾克斯迪司',
           ko: '엑스데스 공격',
         },
       },
@@ -2893,27 +3041,35 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         shortFire: {
           en: 'Short Fire',
+          cn: '短火',
         },
         shortWater: {
           en: 'Short Water',
+          cn: '短水',
         },
         fire: {
           en: 'Fire',
+          cn: '火',
         },
         water: {
           en: 'Water',
+          cn: '水',
         },
         headwind: {
           en: 'Headwind on YOU',
+          cn: '逆风点你',
         },
         tailwind: {
           en: 'Tailwind on YOU',
+          cn: '顺风点你',
         },
         withElement: {
           en: '${short}: ${element} + ${wind}',
+          cn: '${short}: ${element} + ${wind}',
         },
         withoutElement: {
           en: '${short}: ${wind}',
+          cn: '${short}: ${wind}',
         },
       },
     },
@@ -2981,9 +3137,20 @@ const triggerSet: TriggerSet<Data> = {
         const fire = output.fire!({ dir: output[fireDir]!() });
         const water = output.water!({ dir: output[waterDir]!() });
         const wind = output.wind!({ dir: output[windDir]!() });
+        const myElement = data.myElement;
+
+        if (config === 'lb3')
+          return output.crystalsMech!({
+            crystals: output.shortLongCrystals!({
+              short: fShort ? fire : water,
+              long: fShort ? water : fire,
+            }),
+            mech: myElement === 'fire'
+              ? output.yeyinTlbFireOut!()
+              : output.yeyinTlbGoFireCrystal!({ dir: output[fireDir]!() }),
+          });
 
         if (config !== 'none') {
-          const myElement = data.myElement;
           // Tank will need to first position Exdeath for Thunder III AOE
           if (data.role === 'tank') {
             const exdeathLocaleNames: LocaleText = {
@@ -3043,7 +3210,7 @@ const triggerSet: TriggerSet<Data> = {
               }
             }
 
-            // LB3 Config
+            // Tank without a fire/water element still positions both bosses.
             const chaosLocaleNames: LocaleText = {
               en: 'Chaos',
               de: 'Chaos',
@@ -3125,30 +3292,6 @@ const triggerSet: TriggerSet<Data> = {
               }),
             });
           }
-
-          // LB3 Config
-          if (data.role !== 'dps' || Util.isMeleeDpsJob(data.job)) {
-            return output.crystalsMech!({
-              crystals: output.shortLongCrystals!({
-                short: fShort ? fire : water,
-                long: fShort ? water : fire,
-              }),
-              mech: output.beNearWind!({
-                dir: wind,
-              }),
-            });
-          }
-          // Ranged DPS Bait
-          return output.crystalsMech!({
-            crystals: output.shortLongCrystals!({
-              short: fShort ? fire : water,
-              long: fShort ? water : fire,
-            }),
-            mech: output.baitCrystal!({
-              crystal: fShort ? fire : water,
-              inout: output.out!(),
-            }),
-          });
         }
 
         return output.crystals!({
@@ -3200,32 +3343,16 @@ const triggerSet: TriggerSet<Data> = {
         const msg = players?.join(', ');
         const spread = output.fireOnPlayers!({ players: msg });
 
-        const isRangedDPS = Util.isRangedDpsJob(data.job) || Util.isCasterDpsJob(data.job);
-        const severity = config === 'lb3' && isRangedDPS
-          ? 'alertText'
-          : myElement === 'fire'
+        const severity = myElement === 'fire'
           ? 'alertText'
           : 'infoText';
 
-        if (fShort) {
-          if (config === 'lb3') {
-            const isNotRanged = data.role !== 'dps' || Util.isMeleeDpsJob(data.job);
-            return {
-              [severity]: output.mechThenMech!({
-                mech1: isNotRanged ? spread : output.baitCrystal!({
-                  crystal: fire,
-                  inout: output.out!(),
-                }),
-                mech2: isNotRanged
-                  ? output.donutLater!()
-                  : output.baitCrystal!({
-                    crystal: water,
-                    inout: output.out!(),
-                  }),
-              }),
-            };
-          }
+        if (config === 'lb3')
+          return myElement === 'fire'
+            ? { alertText: output.yeyinTlbFireOut!() }
+            : undefined;
 
+        if (fShort) {
           if (config === 'sg3k') {
             // Get player expected to be inner water bait
             const players = data.waterElementPlayers.filter(
@@ -3267,20 +3394,6 @@ const triggerSet: TriggerSet<Data> = {
           tc: '艾克斯迪司',
         };
         const exdeathName = exdeathLocaleNames[data.parserLang];
-        if (config === 'lb3') {
-          const isNotRanged = data.role !== 'dps' || Util.isMeleeDpsJob(data.job);
-          return {
-            [severity]: output.mechThenMech!({
-              mech1: isNotRanged ? spread : output.baitCrystal!({
-                crystal: fire,
-                inout: output.out!(),
-              }),
-              mech2: Util.isRangedDpsJob(data.job)
-                ? output.baitJump!()
-                : output.beNearExdeath!({ name: exdeathName }),
-            }),
-          };
-        }
 
         if (config === 'sg3k') {
           // Players will need to get to opposite side of Wind Crystal
@@ -3350,10 +3463,7 @@ const triggerSet: TriggerSet<Data> = {
         const water = output.water!({ dir: output[waterDir]!() });
         const wind = output.wind!({ dir: output[windDir]!() });
 
-        const isRangedDPS = Util.isRangedDpsJob(data.job) || Util.isCasterDpsJob(data.job);
-        const severity = config === 'lb3' && isRangedDPS
-          ? 'alertText'
-          : myElement === 'water'
+        const severity = myElement === 'water'
           ? 'alertText'
           : 'infoText';
 
@@ -3367,25 +3477,10 @@ const triggerSet: TriggerSet<Data> = {
         const msg = players?.join(', ');
         const donut = output.waterOnPlayers!({ players: msg });
 
-        if (!fShort) {
-          if (config === 'lb3') {
-            const isNotRanged = data.role !== 'dps' || Util.isMeleeDpsJob(data.job);
-            return {
-              [severity]: output.mechThenMech!({
-                mech1: isNotRanged ? donut : output.baitCrystal!({
-                  crystal: water,
-                  inout: output.out!(),
-                }),
-                mech2: isNotRanged
-                  ? output.roleStacks!()
-                  : output.baitCrystal!({
-                    crystal: fire,
-                    inout: output.out!(),
-                  }),
-              }),
-            };
-          }
+        if (config === 'lb3')
+          return;
 
+        if (!fShort) {
           if (config === 'sg3k') {
             // Get player expected to be inner water bait
             const players = data.waterElementPlayers.filter(
@@ -3427,20 +3522,6 @@ const triggerSet: TriggerSet<Data> = {
           tc: '艾克斯迪司',
         };
         const exdeathName = exdeathLocaleNames[data.parserLang];
-        if (config === 'lb3') {
-          const isNotRanged = data.role !== 'dps' || Util.isMeleeDpsJob(data.job);
-          return {
-            [severity]: output.mechThenMech!({
-              mech1: isNotRanged ? donut : output.baitCrystal!({
-                crystal: water,
-                inout: output.out!(),
-              }),
-              mech2: Util.isRangedDpsJob(data.job)
-                ? output.baitJump!()
-                : output.beNearExdeath!({ name: exdeathName }),
-            }),
-          };
-        }
 
         if (config === 'sg3k') {
           // Get player expected to be inner water bait
@@ -3525,18 +3606,22 @@ const triggerSet: TriggerSet<Data> = {
         });
       },
       outputStrings: {
-        ...Directions.outputStringsIntercardDir,
+        ...p3IntercardMarkerOutputStrings,
         fire: {
           en: 'Fire ${dir}',
+          cn: '火 ${dir}',
         },
         water: {
           en: 'Water ${dir}',
+          cn: '水 ${dir}',
         },
         wind: {
           en: 'Wind ${dir}',
+          cn: '风 ${dir}',
         },
         crystals: {
           en: '${long} => ${wind} (later)',
+          cn: '${long} => ${wind}（稍后）',
         },
       },
     },
@@ -3562,28 +3647,26 @@ const triggerSet: TriggerSet<Data> = {
       infoText: (data, _matches, output) => {
         const windDirNum = data.windCrystalDirNum;
         const config = data.triggerSetConfig.boa;
+        if (config === 'lb3')
+          return output.yeyinTlbStackMiddle!();
+
         const windDir = windDirNum === undefined
           ? 'unknown'
-          : config !== 'lb3'
-          ? Directions.outputIntercardDir[windDirNum] ?? 'unknown'
-          : data.role === 'healer'
-          ? Directions.outputIntercardDir[(windDirNum + 3) % 4] ?? 'unknown' // Wrap-around
-          : Util.isMeleeDpsJob(data.job) || data.role === 'tank'
-          ? Directions.outputIntercardDir[(windDirNum + 2) % 4] ?? 'unknown' // Opposite of Wind Crystal
-          : Directions.outputIntercardDir[(windDirNum + 1) % 4] ?? 'unknown'; // Ranged DPS
+          : Directions.outputIntercardDir[windDirNum] ?? 'unknown';
 
-        return config !== 'lb3'
-          ? output.wind!({ dir: output[windDir]!() })
-          : output.knockbackToDir!({ dir: output[windDir]!() });
+        return output.wind!({ dir: output[windDir]!() });
       },
       outputStrings: {
-        ...Directions.outputStringsIntercardDir,
+        ...p3IntercardMarkerOutputStrings,
         wind: {
           en: 'Knockback to Wind ${dir} (later)',
+          cn: '稍后击退到风 ${dir}',
         },
         knockbackToDir: {
           en: 'Knockback to ${dir} (later)',
+          cn: '稍后击退到${dir}',
         },
+        yeyinTlbStackMiddle: boaOutputStrings.yeyinTlbStackMiddle!,
       },
     },
     {
@@ -3610,6 +3693,7 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         awayFromBoss: {
           en: 'Away from ${boss}',
+          cn: '远离${boss}',
         },
       },
     },
@@ -3623,12 +3707,15 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = {
           avoid: {
             en: '${boss}${cleaves}',
+            cn: '${boss}${cleaves}',
           },
           tankCleaveNearThenSwap: {
             en: 'Near ${boss}${cleave} => ${swap}',
+            cn: '靠近${boss}${cleave} => ${swap}',
           },
           boss: {
             en: '${boss}: ',
+            cn: '${boss}: ',
           },
           tankCleave: Outputs.tankCleave,
           avoidTankCleaves: Outputs.avoidTankCleaves,
@@ -3672,9 +3759,11 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         beNearBoss: {
           en: 'Be Near ${boss} (swap)',
+          cn: '靠近${boss}（换T）',
         },
         awayFromBoss: {
           en: 'Away from ${boss} (swap)',
+          cn: '远离${boss}（换T）',
         },
       },
     },
@@ -3700,39 +3789,32 @@ const triggerSet: TriggerSet<Data> = {
       id: 'DMU P3 Ultima Blaster Collect',
       // Starts from random cardinal/intercardinal then rotates either CW or CCW
       // These are raidwide AOEs, but also include telegraphed lines and explosions
-      // Ability lines can have erroneous values
+      // Ability lines can have erroneous values, AbilityExtra has correct heading
       // Entity that does these has BNpcID 4BFB, added shortly before
       // 271 ActorSetPos and 261 CombatantMemory Change lines are updated just prior to the ability
-      type: 'Ability',
-      netRegex: { id: 'BAE3', source: 'Kefka', capture: true },
+      type: 'AbilityExtra',
+      netRegex: { id: 'BAE3', capture: true },
       condition: (data) => data.blasterRotation === undefined,
       suppressSeconds: 1,
       run: (data, matches) => {
-        const actor = data.actorPositions[matches.sourceId];
-        if (actor === undefined)
-          return;
-
-        const x2 = actor.x;
-        const y2 = actor.y;
+        const hdg2 = parseFloat(matches.heading);
         // Get rotation of first and second Kefka blasters
-        const x1 = data.firstBlaster[0];
-        const y1 = data.firstBlaster[1];
-        if (x1 === undefined || y1 === undefined) {
-          data.firstBlaster = [x2, y2];
-          data.firstBlasterDirNum = (Directions.xyTo8DirNum(x2, y2, centerX, centerY) + 4) % 8; // Need opposite side
+        const hdg1 = data.firstBlasterHdg;
+        if (hdg1 === undefined) {
+          data.firstBlasterHdg = hdg2;
+          data.firstBlasterDirNum = Directions.hdgTo8DirNum(hdg2);
           // Return to get the next blaster
           return;
         }
 
-        // Compute atan2 of determinant and dot product to get rotational direction
-        // Note: X and Y are flipped due to Y axis being reversed
-        data.blasterRotation = Math.atan2(y1 * x2 - x1 * y2, y1 * y2 + x1 * x2);
+        // Get rotation where > 0 is counterclockwise and < 0 is clockwise.
+        data.blasterRotation = Math.atan2(Math.sin(hdg2 - hdg1), Math.cos(hdg2 - hdg1));
       },
     },
     {
       id: 'DMU P3 Ultima Blaster Rotation',
-      type: 'Ability',
-      netRegex: { id: 'BAE3', source: 'Kefka', capture: false },
+      type: 'AbilityExtra',
+      netRegex: { id: 'BAE3', capture: false },
       condition: (data) => data.blasterRotation !== undefined,
       durationSeconds: 10,
       suppressSeconds: 99999,
@@ -3742,21 +3824,22 @@ const triggerSet: TriggerSet<Data> = {
         if (rotation === undefined || dirNum === undefined)
           return;
 
-        // Will need 16Dir for positions later
-        const dir = Directions.output8Dir[dirNum] ?? 'unknown';
+        const marker = ultimaBlasterMarker(dirNum);
 
-        if (rotation < 0)
-          return output.clockwise!({ card: output[dir]!() });
         if (rotation > 0)
-          return output.counterclockwise!({ card: output[dir]!() });
+          return output.clockwise!({ marker: output[marker]!() });
+        if (rotation < 0)
+          return output.counterclockwise!({ marker: output[marker]!() });
       },
       outputStrings: {
-        ...Directions.outputStrings8Dir,
+        ...ultimaBlasterMarkerOutputStrings,
         clockwise: {
-          en: '<== ${card} Clockwise (Later)',
+          en: 'Mahjong: ${marker} Clockwise',
+          cn: '麻将：${marker}顺时针数',
         },
         counterclockwise: {
-          en: '${card} Counterclockwise (Later) ==>',
+          en: 'Mahjong: ${marker} Counterclockwise',
+          cn: '麻将：${marker}逆时针数',
         },
       },
     },
@@ -3770,11 +3853,33 @@ const triggerSet: TriggerSet<Data> = {
       netRegex: { id: ['BAFD', 'BAFE'], source: 'Chaos', capture: false },
       delaySeconds: 10,
       suppressSeconds: 99999,
-      infoText: (_data, _matches, output) => output.baitJump!(),
+      infoText: (data, _matches, output) => {
+        if (data.triggerSetConfig.boa !== 'lb3')
+          return output.baitJump!();
+        const fireDirNum = data.fireCrystalDirNum;
+        const fireDir = fireDirNum === undefined
+          ? 'unknown'
+          : Directions.outputIntercardDir[fireDirNum] ?? 'unknown';
+        const d3Dir = fireDirNum === undefined
+          ? 'unknown'
+          : Directions.outputIntercardDir[(fireDirNum + 2) % 4] ?? 'unknown';
+        if (data.myPartySlot === 'D3')
+          return output.d3BaitJump!({ dir: output[d3Dir]!() });
+        return output.dodgeJumpAtFireCrystal!({ dir: output[fireDir]!() });
+      },
       outputStrings: {
+        ...p3IntercardMarkerOutputStrings,
         baitJump: {
-          en: 'Bait Jump',
+          en: 'Bait Jump?',
+          de: 'Sprung ködern?',
+          fr: 'Attirez le saut ?',
+          ja: 'ジャンプ誘導?',
+          cn: '引导超级跳?',
+          ko: '점프 유도?',
+          tc: '引導跳躍?',
         },
+        d3BaitJump: boaOutputStrings.yeyinTlbD3BaitJump!,
+        dodgeJumpAtFireCrystal: boaOutputStrings.yeyinTlbDodgeJumpAtFireCrystal!,
       },
     },
     {
@@ -3785,20 +3890,25 @@ const triggerSet: TriggerSet<Data> = {
       // Tailwind look away from Exdeath
       //
       // Party can Tank LB3 to survive stacking the winds
+      // Knockback happens slightly after the cast and wind debuffs expire shortly after.
       type: 'StartsUsing',
       netRegex: { id: 'BB13', source: 'Exdeath', capture: true },
+      durationSeconds: (_data, matches) => parseFloat(matches.castTime) + 0.8,
       alertText: (data, matches, output) => {
         const windDirNum = data.windCrystalDirNum;
         const windDir = windDirNum === undefined
           ? 'unknown'
-          : data.triggerSetConfig.boa !== 'lb3'
-          ? Directions.outputIntercardDir[windDirNum] ?? 'unknown'
-          : data.role === 'healer'
-          ? Directions.outputIntercardDir[(windDirNum + 3) % 4] ?? 'unknown' // Wrap-around
-          : Util.isMeleeDpsJob(data.job) || data.role === 'tank'
-          ? Directions.outputIntercardDir[(windDirNum + 2) % 4] ?? 'unknown' // Opposite of Wind Crystal
-          : Directions.outputIntercardDir[(windDirNum + 1) % 4] ?? 'unknown'; // Ranged DPS
+          : Directions.outputIntercardDir[windDirNum] ?? 'unknown';
         const exdeath = matches.source;
+
+        if (data.triggerSetConfig.boa === 'lb3') {
+          if (data.myWind === undefined)
+            return output.yeyinTlbStackMiddle!();
+
+          return output.windFacingThenStackMiddle!({
+            facing: output[data.myWind]!({ name: exdeath }),
+          });
+        }
 
         if (data.myWind === undefined) {
           const knockback = output.knockbackFromExdeath!({ name: exdeath });
@@ -3826,22 +3936,33 @@ const triggerSet: TriggerSet<Data> = {
         });
       },
       outputStrings: {
-        ...Directions.outputStringsIntercardDir,
+        ...p3IntercardMarkerOutputStrings,
         tail: {
           en: 'Face ${name}',
+          cn: '面对 ${name}',
         },
         head: Outputs.lookAwayFromTarget,
         knockbackFromExdeath: {
           en: 'Knockback from ${name}',
+          cn: '被${name}击退',
+          ko: '${name}에서 넉백',
         },
         knockbackFromFacingExdeath: {
           en: 'Knockback from + ${facing}',
+          cn: '${facing}击退',
         },
         knockbackToDir: {
           en: '${knockback} to ${dir}',
+          cn: '${knockback}到${dir}',
         },
         knockbackToCrystal: {
           en: '${knockback} to Crystal',
+          cn: '${knockback}到水晶',
+        },
+        yeyinTlbStackMiddle: boaOutputStrings.yeyinTlbStackMiddle!,
+        windFacingThenStackMiddle: {
+          en: '${facing} => Stack Middle for Wind',
+          cn: '${facing} => 中间8人抱团吃风',
         },
       },
     },
@@ -3868,7 +3989,7 @@ const triggerSet: TriggerSet<Data> = {
       },
     },
     {
-      id: 'DMU P1 Ultima Blaster Location',
+      id: 'DMU P3 Ultima Blaster Location',
       // Nearest inter-inter cardinal opposite that of first blaster
       // Could also account for player missing a marker as these are added sequentially
       type: 'HeadMarker',
@@ -3907,35 +4028,35 @@ const triggerSet: TriggerSet<Data> = {
         if (blasterDirNum === undefined || rotation === undefined || rotation === 0)
           return output.num!({ num: myNum });
 
-        // Subtract 1 from ourself as 1 is 0th position
         const adjNum = (myNum - 1) * 2; // Convert our number to 16Dir format
         const adjBlaster = blasterDirNum * 2; // Convert blasterDirNum to 16Dir format
 
-        // Boss is at an intercard, so +1 or -1 to get inter-inter safe spot
+        // Count from the opposite of the preview start, in the opposite direction.
+        // A clockwise preview starting from A is counted counterclockwise from C.
         const adjustedDirNum = rotation < 0
-          ? (adjNum + adjBlaster + 1) % 16 // Clockwise
-          : ((adjBlaster - 1 - adjNum) + 16) % 16; // Counterclock
+          ? ((adjBlaster - 1 - adjNum) + 16) % 16 // Clockwise preview, counterclockwise numbers
+          : (adjNum + adjBlaster + 1) % 16; // Counterclockwise preview, clockwise numbers
 
-        // Find inter-inter cardinal
-        const safeDir = Directions.output16Dir[adjustedDirNum] ?? 'unknown';
+        const safeSpot = ultimaBlasterMarkerBetween(adjustedDirNum);
         return output.text!({
           num: output.num!({ num: myNum }),
-          dir: output[safeDir]!(),
+          spot: output[safeSpot]!(),
         });
       },
       outputStrings: {
-        ...Directions.outputStrings16Dir,
+        ...ultimaBlasterMarkerBetweenOutputStrings,
         num: {
           en: '#${num}',
           de: '#${num}',
           fr: '#${num}',
           ja: '${num}番',
-          cn: '#${num}',
+          cn: '${num}麻',
           ko: '${num}번째',
           tc: '#${num}',
         },
         text: {
-          en: '${num}: ${dir}',
+          en: '${num}: ${spot}',
+          cn: '${num}：${spot}',
         },
       },
     },
@@ -3949,6 +4070,7 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         getBehindTarget: {
           en: 'Get Behind ${target}',
+          cn: '去${target}背后',
           ko: '${target} 뒤로',
         },
       },
@@ -4038,6 +4160,7 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         you: {
           en: 'YOU',
+          cn: '你',
         },
         text: {
           en: '${num} (with ${players})',
@@ -4050,6 +4173,7 @@ const triggerSet: TriggerSet<Data> = {
         },
         accretionHealer: {
           en: '${num}: Accretion on ${player1} => ${player2}',
+          cn: '${num}: 泥土 ${player1} => ${player2}',
         },
       },
     },
@@ -4189,6 +4313,7 @@ const triggerSet: TriggerSet<Data> = {
         },
         slapDirMechThenOut: {
           en: '${dir1} + ${mech} => ${out}',
+          cn: '${dir1} + ${mech} => ${out}',
         },
       },
     },
@@ -4300,6 +4425,7 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = blackHoleOutputStrings;
 
         const config = data.triggerSetConfig.blackhole;
+        const num = pendingNothingnessNum(data);
         const dirNum = data.blackHoleIdDirNums[matches.sourceId];
         const dir = dirNum === undefined
           ? 'unknown'
@@ -4311,13 +4437,13 @@ const triggerSet: TriggerSet<Data> = {
         )
           return {
             alertText: output.takeDirTetherClockwise!({
-              num: data.nothingnessCount,
+              num: num,
               dir: output[dir]!(),
             }),
           };
         return {
           infoText: output.oneBlackHole!({
-            num: data.nothingnessCount,
+            num: num,
             dir: output[dir]!(),
           }),
         };
@@ -4337,6 +4463,7 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = blackHoleOutputStrings;
 
         const config = data.triggerSetConfig.blackhole;
+        const num = pendingNothingnessNum(data);
         const kefkaDir = data.kefkaTeleportDirNum;
         const dirNums = data.blackHoleTetherDirNums;
 
@@ -4359,14 +4486,14 @@ const triggerSet: TriggerSet<Data> = {
           if (data.role === 'dps')
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: num,
                 dir: output[dir1]!(),
               }),
             };
           // Support #1
           return {
             alertText: output.takeDirTetherClockwise!({
-              num: data.nothingnessCount,
+              num: num,
               dir: output[dir2]!(),
             }),
           };
@@ -4374,7 +4501,7 @@ const triggerSet: TriggerSet<Data> = {
 
         return {
           infoText: output.twoBlackHoles!({
-            num: data.nothingnessCount,
+            num: num,
             dir1: output[dir1]!(),
             dir2: output[dir2]!(),
           }),
@@ -4395,6 +4522,7 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = blackHoleOutputStrings;
 
         const config = data.triggerSetConfig.blackhole;
+        const num = pendingNothingnessNum(data);
         const kefkaDir = data.kefkaTeleportDirNum;
         const dirNums = data.blackHoleTetherDirNums;
 
@@ -4417,21 +4545,21 @@ const triggerSet: TriggerSet<Data> = {
           if (data.hadAccretion)
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: num,
                 dir: output[dir3]!(),
               }),
             };
           if (data.role === 'dps')
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: num,
                 dir: output[dir1]!(),
               }),
             };
           // Support #1
           return {
             alertText: output.takeDirTetherClockwise!({
-              num: data.nothingnessCount,
+              num: num,
               dir: output[dir2]!(),
             }),
           };
@@ -4439,7 +4567,7 @@ const triggerSet: TriggerSet<Data> = {
 
         return {
           infoText: output.threeBlackHoles!({
-            num: data.nothingnessCount,
+            num: num,
             dir1: output[dir1]!(),
             dir2: output[dir2]!(),
             dir3: output[dir3]!(),
@@ -4566,6 +4694,7 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = blackHoleOutputStrings;
 
         const config = data.triggerSetConfig.blackhole;
+        const num = pendingNothingnessNum(data);
         const kefkaDir = data.kefkaTeleportDirNum;
         const dirNums = data.blackHoleTetherDirNums;
 
@@ -4588,21 +4717,21 @@ const triggerSet: TriggerSet<Data> = {
           if (data.hadAccretion)
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: num,
                 dir: output[dir3]!(),
               }),
             };
           if (data.role === 'dps')
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: num,
                 dir: output[dir1]!(),
               }),
             };
           // Support #2
           return {
             alertText: output.takeDirTetherClockwise!({
-              num: data.nothingnessCount,
+              num: num,
               dir: output[dir2]!(),
             }),
           };
@@ -4610,7 +4739,7 @@ const triggerSet: TriggerSet<Data> = {
 
         return {
           infoText: output.threeBlackHoles!({
-            num: data.nothingnessCount,
+            num: num,
             dir1: output[dir1]!(),
             dir2: output[dir2]!(),
             dir3: output[dir3]!(),
@@ -4734,6 +4863,7 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = blackHoleOutputStrings;
 
         const config = data.triggerSetConfig.blackhole;
+        const num = pendingNothingnessNum(data);
         const kefkaDir = data.kefkaTeleportDirNum;
         const dirNums = data.blackHoleTetherDirNums;
 
@@ -4753,14 +4883,14 @@ const triggerSet: TriggerSet<Data> = {
           if (data.role === 'dps')
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: num,
                 dir: output[dir1]!(),
               }),
             };
           // Support #3
           return {
             alertText: output.takeDirTetherClockwise!({
-              num: data.nothingnessCount,
+              num: num,
               dir: output[dir2]!(),
             }),
           };
@@ -4768,7 +4898,7 @@ const triggerSet: TriggerSet<Data> = {
 
         return {
           infoText: output.twoBlackHoles!({
-            num: data.nothingnessCount,
+            num: num,
             dir1: output[dir1]!(),
             dir2: output[dir2]!(),
           }),
@@ -4789,6 +4919,7 @@ const triggerSet: TriggerSet<Data> = {
         output.responseOutputStrings = blackHoleOutputStrings;
 
         const config = data.triggerSetConfig.blackhole;
+        const num = pendingNothingnessNum(data);
         const dirNum = data.blackHoleIdDirNums[matches.sourceId];
         const dir = dirNum === undefined
           ? 'unknown'
@@ -4800,13 +4931,13 @@ const triggerSet: TriggerSet<Data> = {
         )
           return {
             alertText: output.takeDirTetherClockwise!({
-              num: data.nothingnessCount,
+              num: num,
               dir: output[dir]!(),
             }),
           };
         return {
           infoText: output.oneBlackHole!({
-            num: data.nothingnessCount,
+            num: num,
             dir: output[dir]!(),
           }),
         };
@@ -4827,13 +4958,16 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         roleStack: {
           en: 'Role Stack',
+          cn: '职能分摊',
         },
         getTowers: Outputs.getTowers,
         puddlesThenMech: {
           en: '${bait} => ${mech1}/${mech2}',
+          cn: '${bait} => ${mech1}/${mech2}',
         },
         baitPuddles: {
           en: 'Bait Puddles x2',
+          cn: '引导冰圈x2',
         },
       },
     },
@@ -4846,12 +4980,14 @@ const triggerSet: TriggerSet<Data> = {
       infoText: (_data, matches, output) => {
         const heading = parseFloat(matches.heading);
         const dirNum = (Directions.hdgTo8DirNum(heading) + 4) % 8;
-        return output.text!({ dir: output[dirNum]!() });
+        const dir = Directions.output8Dir[dirNum] ?? 'unknown';
+        return output.text!({ dir: output[dir]!() });
       },
       outputStrings: {
         ...Directions.outputStrings8Dir,
         text: {
           en: '${dir} Kefka',
+          cn: '${dir}凯夫卡',
         },
       },
     },
