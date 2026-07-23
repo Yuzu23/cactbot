@@ -2,7 +2,7 @@ import Conditions from '../../../../../resources/conditions';
 import Outputs from '../../../../../resources/outputs';
 import { callOverlayHandler } from '../../../../../resources/overlay_plugin_api';
 import { Responses } from '../../../../../resources/responses';
-import Util, { Directions } from '../../../../../resources/util';
+import { Directions } from '../../../../../resources/util';
 import ZoneId from '../../../../../resources/zone_id';
 import { RaidbossData } from '../../../../../types/data';
 import { PluginCombatantState } from '../../../../../types/event';
@@ -478,7 +478,8 @@ const getPathOfLightStackPlayersForMyGroup = (data: Data): string[] => {
     return [];
 
   return data.pathOfLightStackPlayers.filter((player) =>
-    data.pathOfLightAssignmentByPlayer[player]?.group === group);
+    data.pathOfLightAssignmentByPlayer[player]?.group === group
+  );
 };
 
 const getPathOfLightConePlayersForMyGroup = (data: Data): string[] => {
@@ -487,7 +488,8 @@ const getPathOfLightConePlayersForMyGroup = (data: Data): string[] => {
     return [];
 
   return data.pathOfLightConePlayers.filter((player) =>
-    data.pathOfLightAssignmentByPlayer[player]?.group === group);
+    data.pathOfLightAssignmentByPlayer[player]?.group === group
+  );
 };
 
 const getPathOfLightConePlayersForRelative = (data: Data): string[] => {
@@ -1107,39 +1109,39 @@ const ultimaBlasterMarkerBetween = (dirNum: number | undefined): string => {
   if (marker1 === 'unknown' || marker2 === 'unknown')
     return 'unknown';
 
-  return `${marker1}_${marker2}`;
+  return `${marker1}${marker2[0]?.toUpperCase() ?? ''}${marker2.slice(1)}`;
 };
 
 const ultimaBlasterMarkerBetweenOutputStrings: OutputStrings = {
-  markerA_marker2: {
+  markerAMarker2: {
     en: 'A/2',
     cn: 'A2中间',
   },
-  marker2_markerB: {
+  marker2MarkerB: {
     en: '2/B',
     cn: '2B中间',
   },
-  markerB_marker3: {
+  markerBMarker3: {
     en: 'B/3',
     cn: 'B3中间',
   },
-  marker3_markerC: {
+  marker3MarkerC: {
     en: '3/C',
     cn: '3C中间',
   },
-  markerC_marker4: {
+  markerCMarker4: {
     en: 'C/4',
     cn: 'C4中间',
   },
-  marker4_markerD: {
+  marker4MarkerD: {
     en: '4/D',
     cn: '4D中间',
   },
-  markerD_marker1: {
+  markerDMarker1: {
     en: 'D/1',
     cn: 'D1中间',
   },
-  marker1_markerA: {
+  marker1MarkerA: {
     en: '1/A',
     cn: '1A中间',
   },
@@ -1255,8 +1257,7 @@ const triggerSet: TriggerSet<Data> = {
           `Yeyin TLB: Fire debuffs out, everyone else to fire crystal, D3 baits jump, then party stacks middle for wind with Tank LB3<br />
         Entropy/Dynamic Fluid Bait (Default): Follows SG3K Raidplan: Entropy/Fluid bait their crystals and get hit by crystal's aoe<br />
         None: Only calls debuffs and locations`,
-        cn:
-          `夜音式TLB：火点名出去，其他人去火水晶，D3引导超级跳，真空波后中间8人抱团吃风，坦克LB3<br />
+        cn: `夜音式TLB：火点名出去，其他人去火水晶，D3引导超级跳，真空波后中间8人抱团吃风，坦克LB3<br />
         火水点名引导：按SG3K Raidplan处理火水点名<br />
         通用播报：只报点名和位置`,
       },
@@ -1305,7 +1306,8 @@ const triggerSet: TriggerSet<Data> = {
     {
       id: 'blackhole',
       comment: {
-        en: 'Kefkabin: #1 DPS, #1 Support, #1 Accretion, #2 DPS, #2 Support, #2 Accretion, #3 DPS, #3 Support',
+        en:
+          'Kefkabin: #1 DPS, #1 Support, #1 Accretion, #2 DPS, #2 Support, #2 Accretion, #3 DPS, #3 Support',
         cn: 'Kefkabin：1DPS、1TH、1泥土、2DPS、2TH、2泥土、3DPS、3TH',
       },
       name: {
@@ -3330,7 +3332,6 @@ const triggerSet: TriggerSet<Data> = {
         const myWind = data.myWind;
 
         const fire = output.fire!({ dir: output[fireDir]!() });
-        const water = output.water!({ dir: output[waterDir]!() });
         const wind = output.wind!({ dir: output[windDir]!() });
 
         const players = data.fireElementPlayers.map(
@@ -3459,7 +3460,6 @@ const triggerSet: TriggerSet<Data> = {
         const myElement = data.myElement;
         const myWind = data.myWind;
 
-        const fire = output.fire!({ dir: output[fireDir]!() });
         const water = output.water!({ dir: output[waterDir]!() });
         const wind = output.wind!({ dir: output[windDir]!() });
 
