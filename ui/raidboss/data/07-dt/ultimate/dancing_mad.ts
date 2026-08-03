@@ -5,9 +5,8 @@ import { Responses } from '../../../../../resources/responses';
 import Util, { Directions } from '../../../../../resources/util';
 import ZoneId from '../../../../../resources/zone_id';
 import { RaidbossData } from '../../../../../types/data';
-import { PluginCombatantState } from '../../../../../types/event';
 import { Job } from '../../../../../types/job';
-import { LocaleText, OutputStrings, TriggerSet } from '../../../../../types/trigger';
+import { LocaleText, Output, OutputStrings, TriggerSet } from '../../../../../types/trigger';
 
 // TODO: P1 Tele-Portent configuration options
 
@@ -45,6 +44,22 @@ type PathOfLightTowerTwoOutput =
   | 'rightUpBait'
   | 'rightDownBait'
   | 'unknown';
+type BlackHoleStrategy = 'xinde' | 'kefka' | 'none';
+type BlackHoleMarker =
+  | 'attack1'
+  | 'attack2'
+  | 'attack3'
+  | 'bind1'
+  | 'bind2'
+  | 'bind3'
+  | 'ignore1'
+  | 'ignore2';
+type BlackHoleAction =
+  | { type: 'take'; dirIndex: number }
+  | { type: 'keep' }
+  | { type: 'pass' };
+type P3KnockDownRole = 'support' | 'dps';
+type P3TowerSide = 'left' | 'right' | 'unknown';
 type SlotConfigId =
   | 'partySlotMT'
   | 'partySlotST'
@@ -180,7 +195,7 @@ export interface Data extends RaidbossData {
     forsaken: ForsakenStrategy;
     boa: 'lb3' | 'sg3k' | 'none';
     accretion: 'line' | 'role';
-    blackhole: 'kefka' | 'none';
+    blackhole: BlackHoleStrategy;
     partySlotMT: string;
     partySlotST: string;
     partySlotH1: string;
@@ -223,8 +238,8 @@ export interface Data extends RaidbossData {
   pathOfLightMarkerByPlayer: { [name: string]: PathOfLightMarker };
   pathOfLightAssignmentByPlayer: { [name: string]: PathOfLightAssignment };
   myPathOfLightAssignment?: PathOfLightAssignment;
-  pathOfLightStackCombatants: PluginCombatantState[];
-  pathOfLightConeCombatants: PluginCombatantState[];
+  pathOfLightStackRelativeOutputByPlayer: { [name: string]: PathOfLightTowerOneOutput };
+  pathOfLightConeRelativeOutputByPlayer: { [name: string]: PathOfLightTowerOneOutput };
   myPathOfLights: PathOfLightMarker[];
   partySlotByPlayer: { [name: string]: PartySlot };
   partySlotAssignments: Partial<Record<PartySlot, string>>;
@@ -247,10 +262,17 @@ export interface Data extends RaidbossData {
   firstAccretion?: string;
   secondAccretion?: string;
   hadAccretion: boolean;
+  myBlackHoleWaymark?: string;
+  myBlackHoleMarker?: BlackHoleMarker;
+  mySuggestedBlackHoleMarker?: BlackHoleMarker;
   blackHoleIdDirNums: { [id: string]: number };
   kefkaTeleportDirNum?: number;
   nothingnessCount: number;
   blackHoleTetherDirNums: number[];
+  p3IsSecondPuddle: boolean;
+  p3KnockDownTarget?: string;
+  p3IsKnockDown2: boolean;
+  p3BlizzardStarted: boolean;
 }
 
 const headMarkerData = {
@@ -283,6 +305,7 @@ const headMarkerData = {
   '6': '01B6',
   '7': '01B7',
   '8': '01B8',
+  'stompStack': '00A1', // Knock Down stack target
 } as const;
 
 const pathOfLightMarkerById: { [id: string]: PathOfLightMarker } = {
@@ -472,59 +495,106 @@ const getStealFireTowerTwoBaitOutput = (
   }
 };
 
-const getPathOfLightStackPlayersForMyGroup = (data: Data): string[] => {
-  const group = data.myPathOfLightAssignment?.group;
-  if (group === undefined || group === 'unknown')
+const getPathOfLightPlayersForGroup = (
+  data: Data,
+  players: string[],
+  group: PathOfLightGroup,
+): string[] => {
+  if (group === 'unknown')
     return [];
 
-  return data.pathOfLightStackPlayers.filter((player) =>
+  return players.filter((player) =>
     data.pathOfLightAssignmentByPlayer[player]?.group === group);
 };
 
-const getPathOfLightConePlayersForMyGroup = (data: Data): string[] => {
-  const group = data.myPathOfLightAssignment?.group;
-  if (group === undefined || group === 'unknown')
-    return [];
+const getPathOfLightStackPlayersForGroup = (
+  data: Data,
+  group: PathOfLightGroup,
+): string[] => {
+  return getPathOfLightPlayersForGroup(data, data.pathOfLightStackPlayers, group);
+};
 
-  return data.pathOfLightConePlayers.filter((player) =>
-    data.pathOfLightAssignmentByPlayer[player]?.group === group);
+const getPathOfLightConePlayersForGroup = (
+  data: Data,
+  group: PathOfLightGroup,
+): string[] => {
+  return getPathOfLightPlayersForGroup(data, data.pathOfLightConePlayers, group);
 };
 
 const getPathOfLightConePlayersForRelative = (data: Data): string[] => {
-  const groupConePlayers = getPathOfLightConePlayersForMyGroup(data);
-  if (groupConePlayers.length === 2)
-    return groupConePlayers;
-  if (data.pathOfLightConePlayers.length === 2)
-    return data.pathOfLightConePlayers;
-  return groupConePlayers;
+  const group = data.myPathOfLightAssignment?.group;
+  if (group === undefined)
+    return [];
+  return getPathOfLightConePlayersForGroup(data, group);
 };
 
-const collectPathOfLightStackCombatants = async (data: Data): Promise<void> => {
-  data.pathOfLightStackCombatants = [];
-  const stackPlayers = getPathOfLightStackPlayersForMyGroup(data);
-  if (!stackPlayers.includes(data.me))
+const setPathOfLightRelativeOutputs = async (
+  data: Data,
+  players: string[],
+  outputsByPlayer: { [name: string]: PathOfLightTowerOneOutput },
+  leftOutput: PathOfLightTowerOneOutput,
+  rightOutput: PathOfLightTowerOneOutput,
+): Promise<void> => {
+  for (const player of players)
+    delete outputsByPlayer[player];
+
+  if (players.length !== 2)
     return;
 
-  const otherStack = stackPlayers.find((player) => player !== data.me);
-  if (otherStack === undefined)
+  const player1 = players[0];
+  const player2 = players[1];
+  if (player1 === undefined || player2 === undefined)
     return;
 
-  data.pathOfLightStackCombatants = (await callOverlayHandler({
+  const combatants = (await callOverlayHandler({
     call: 'getCombatants',
-    names: [data.me, otherStack],
+    names: [player1, player2],
   })).combatants;
+
+  const combatant1 = combatants.find((combatant) => combatant.Name === player1);
+  const combatant2 = combatants.find((combatant) => combatant.Name === player2);
+  if (combatant1 === undefined || combatant2 === undefined)
+    return;
+
+  const x1 = combatant1.PosX - centerX;
+  const y1 = combatant1.PosY - centerY;
+  const x2 = combatant2.PosX - centerX;
+  const y2 = combatant2.PosY - centerY;
+  const cross = x1 * y2 - y1 * x2;
+
+  if (Math.abs(cross) < 0.001)
+    return;
+
+  if (cross > 0) {
+    outputsByPlayer[player1] = leftOutput;
+    outputsByPlayer[player2] = rightOutput;
+  } else {
+    outputsByPlayer[player1] = rightOutput;
+    outputsByPlayer[player2] = leftOutput;
+  }
 };
 
-const collectPathOfLightConeCombatants = async (data: Data): Promise<void> => {
-  data.pathOfLightConeCombatants = [];
-  const conePlayers = getPathOfLightConePlayersForRelative(data);
-  if (conePlayers.length !== 2 || !conePlayers.includes(data.me))
-    return;
+const collectPathOfLightRelativeOutputsForGroup = async (
+  data: Data,
+  group: PathOfLightGroup,
+): Promise<void> => {
+  const stackPlayers = getPathOfLightStackPlayersForGroup(data, group);
+  await setPathOfLightRelativeOutputs(
+    data,
+    stackPlayers,
+    data.pathOfLightStackRelativeOutputByPlayer,
+    'leftTowerInsideLeft',
+    'rightTowerInsideRight',
+  );
 
-  data.pathOfLightConeCombatants = (await callOverlayHandler({
-    call: 'getCombatants',
-    names: conePlayers,
-  })).combatants;
+  const conePlayers = getPathOfLightConePlayersForGroup(data, group);
+  await setPathOfLightRelativeOutputs(
+    data,
+    conePlayers,
+    data.pathOfLightConeRelativeOutputByPlayer,
+    'leftTowerOutsideLeft',
+    'leftTowerOutsideDownBait',
+  );
 };
 
 const getStealFireTowerOneConeRelativeOutput = (
@@ -534,28 +604,7 @@ const getStealFireTowerOneConeRelativeOutput = (
   if (conePlayers.length !== 2 || !conePlayers.includes(data.me))
     return 'unknown';
 
-  const otherCone = conePlayers.find((player) => player !== data.me);
-  if (otherCone === undefined)
-    return 'unknown';
-
-  const myCombatant = data.pathOfLightConeCombatants.find(
-    (combatant) => combatant.Name === data.me,
-  );
-  const otherCombatant = data.pathOfLightConeCombatants.find(
-    (combatant) => combatant.Name === otherCone,
-  );
-  if (myCombatant === undefined || otherCombatant === undefined)
-    return 'unknown';
-
-  const myX = myCombatant.PosX - centerX;
-  const myY = myCombatant.PosY - centerY;
-  const otherX = otherCombatant.PosX - centerX;
-  const otherY = otherCombatant.PosY - centerY;
-  const cross = myX * otherY - myY * otherX;
-
-  if (Math.abs(cross) < 0.001)
-    return 'unknown';
-  return cross > 0 ? 'leftTowerOutsideLeft' : 'leftTowerOutsideDownBait';
+  return data.pathOfLightConeRelativeOutputByPlayer[data.me] ?? 'unknown';
 };
 
 const getStealFireTowerOneOutputWithConeRelative = (
@@ -574,33 +623,12 @@ const getStealFireTowerOneOutputWithConeRelative = (
 const getStealFireOddTowerStackOutput = (
   data: Data,
 ): PathOfLightTowerOneOutput => {
-  const stackPlayers = getPathOfLightStackPlayersForMyGroup(data);
-  const otherStack = stackPlayers.find((player) => player !== data.me);
-  if (otherStack === undefined)
-    return 'unknown';
-
-  const myCombatant = data.pathOfLightStackCombatants.find(
-    (combatant) => combatant.Name === data.me,
-  );
-  const otherCombatant = data.pathOfLightStackCombatants.find(
-    (combatant) => combatant.Name === otherStack,
-  );
-  if (myCombatant === undefined || otherCombatant === undefined)
-    return 'unknown';
-
-  const myX = myCombatant.PosX - centerX;
-  const myY = myCombatant.PosY - centerY;
-  const otherX = otherCombatant.PosX - centerX;
-  const otherY = otherCombatant.PosY - centerY;
-  const cross = myX * otherY - myY * otherX;
-
-  if (Math.abs(cross) < 0.001)
-    return 'unknown';
-  return cross > 0 ? 'leftTowerInsideLeft' : 'rightTowerInsideRight';
+  return data.pathOfLightStackRelativeOutputByPlayer[data.me] ?? 'unknown';
 };
 
 const getStealFireOddTowerOutput = (
   data: Data,
+  spreadOutput: PathOfLightTowerOneOutput = 'rightTowerInsideLeft',
 ): PathOfLightTowerOneOutput => {
   const marker = getPathOfLightMarker(data, data.me);
   if (marker === 'stack')
@@ -608,7 +636,7 @@ const getStealFireOddTowerOutput = (
   if (marker === 'cone')
     return 'leftTowerInsideUpDown';
   if (marker === 'spread')
-    return 'rightTowerInsideLeft';
+    return spreadOutput;
   return 'unknown';
 };
 
@@ -1000,6 +1028,212 @@ const getCWOrderFromN = (
   });
 };
 
+const blackHoleMarkersByLine: { [line: number]: BlackHoleMarker[] } = {
+  1: ['attack1', 'attack2', 'attack3'],
+  2: ['bind1', 'bind2', 'bind3'],
+  3: ['ignore1', 'ignore2'],
+};
+
+const blackHoleMarkerToOrder: Record<BlackHoleMarker, number> = {
+  attack1: 1,
+  attack2: 2,
+  attack3: 3,
+  bind1: 4,
+  bind2: 5,
+  bind3: 6,
+  ignore1: 7,
+  ignore2: 8,
+};
+
+const blackHoleMarkerToLine: Record<BlackHoleMarker, number> = {
+  attack1: 1,
+  attack2: 1,
+  attack3: 1,
+  bind1: 2,
+  bind2: 2,
+  bind3: 2,
+  ignore1: 3,
+  ignore2: 3,
+};
+
+const networkTargetMarkerToBlackHoleMarkerCandidates: { [waymark: string]: BlackHoleMarker[] } = {
+  // Support both possible target-sign orders:
+  // 0-7 attack1-8, 8-10 bind1-3, 11-12 ignore1-2
+  // and 0-4 attack1-5, 5-7 bind1-3, 8-9 ignore1-2, then shapes/attack6-8.
+  '0': ['attack1'],
+  '1': ['attack2'],
+  '2': ['attack3'],
+  '5': ['bind1'],
+  '6': ['bind2'],
+  '7': ['bind3'],
+  '8': ['bind1', 'ignore1'],
+  '9': ['bind2', 'ignore2'],
+  '10': ['bind3'],
+  '11': ['ignore1'],
+  '12': ['ignore2'],
+};
+
+const getBlackHoleMarkerFromNetwork = (
+  data: Data,
+  waymark: string,
+): BlackHoleMarker | undefined => {
+  const candidates = networkTargetMarkerToBlackHoleMarkerCandidates[waymark];
+  if (candidates === undefined)
+    return;
+
+  const myLine = data.inLine[data.me];
+  if (myLine !== undefined)
+    return candidates.find((marker) => blackHoleMarkerToLine[marker] === myLine);
+
+  if (candidates.length === 1)
+    return candidates[0];
+};
+
+const compareBlackHoleTDH = (data: Data, a: string, b: string): number => {
+  const rolePriority = (name: string): number => {
+    if (data.party.isTank(name))
+      return 0;
+    if (data.party.isDPS(name))
+      return 1;
+    if (data.party.isHealer(name))
+      return 2;
+    return 3;
+  };
+  const priorityDiff = rolePriority(a) - rolePriority(b);
+  if (priorityDiff !== 0)
+    return priorityDiff;
+
+  const aIndex = data.party.partyNames.indexOf(a);
+  const bIndex = data.party.partyNames.indexOf(b);
+  const normalizedA = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+  const normalizedB = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+  return normalizedA - normalizedB;
+};
+
+const getSuggestedBlackHoleMarker = (data: Data): BlackHoleMarker | undefined => {
+  const myLine = data.inLine[data.me];
+  if (myLine === undefined)
+    return;
+  const markers = blackHoleMarkersByLine[myLine];
+  if (markers === undefined)
+    return;
+
+  const players = Object.keys(data.inLine)
+    .filter((name) => data.inLine[name] === myLine)
+    .sort((a, b) => compareBlackHoleTDH(data, a, b));
+  const myIndex = players.indexOf(data.me);
+  if (myIndex === -1)
+    return;
+  return markers[myIndex];
+};
+
+const getMyBlackHoleOrder = (data: Data): number | undefined => {
+  const waymarkMarker = data.myBlackHoleWaymark === undefined
+    ? undefined
+    : getBlackHoleMarkerFromNetwork(data, data.myBlackHoleWaymark);
+  const marker = waymarkMarker ?? data.myBlackHoleMarker ?? data.mySuggestedBlackHoleMarker;
+  if (marker === undefined)
+    return;
+  return blackHoleMarkerToOrder[marker];
+};
+
+const getSortedBlackHoleDirKeys = (data: Data): string[] => {
+  const kefkaDir = data.kefkaTeleportDirNum;
+  const startDir = kefkaDir !== undefined
+    ? Math.round(kefkaDir / 2) % 4
+    : -1;
+  const sorted = startDir !== -1 ? getCWOrderFromN(startDir, data.blackHoleTetherDirNums) : [];
+  return sorted.map((dirNum) => Directions.outputCardinalDir[dirNum] ?? 'unknown');
+};
+
+const getXindeBlackHoleAction = (
+  order: number | undefined,
+  nothingnessCount: number,
+): BlackHoleAction | undefined => {
+  if (order === undefined)
+    return;
+
+  switch (nothingnessCount) {
+    case 0:
+      return order === 1 ? { type: 'take', dirIndex: 0 } : undefined;
+    case 1:
+      if (order === 1)
+        return { type: 'take', dirIndex: 0 };
+      return order === 2 ? { type: 'take', dirIndex: 1 } : undefined;
+    case 2:
+      if (order === 1)
+        return { type: 'take', dirIndex: 0 };
+      if (order === 2)
+        return { type: 'take', dirIndex: 1 };
+      return order === 3 ? { type: 'take', dirIndex: 2 } : undefined;
+    case 3:
+      if (order === 1)
+        return { type: 'pass' };
+      if (order === 2 || order === 3)
+        return { type: 'keep' };
+      return order === 4 ? { type: 'take', dirIndex: 0 } : undefined;
+    case 4:
+      if (order === 2)
+        return { type: 'pass' };
+      if (order === 3 || order === 4)
+        return { type: 'keep' };
+      return order === 5 ? { type: 'take', dirIndex: 1 } : undefined;
+    case 5:
+      if (order === 4)
+        return { type: 'take', dirIndex: 0 };
+      if (order === 5)
+        return { type: 'take', dirIndex: 1 };
+      return order === 6 ? { type: 'take', dirIndex: 2 } : undefined;
+    case 6:
+      if (order === 4)
+        return { type: 'pass' };
+      if (order === 5 || order === 6)
+        return { type: 'keep' };
+      return order === 7 ? { type: 'take', dirIndex: 0 } : undefined;
+    case 7:
+      if (order === 5)
+        return { type: 'pass' };
+      if (order === 6 || order === 7)
+        return { type: 'keep' };
+      return order === 8 ? { type: 'take', dirIndex: 1 } : undefined;
+    case 8:
+      if (order === 7)
+        return { type: 'take', dirIndex: 0 };
+      return order === 8 ? { type: 'take', dirIndex: 1 } : undefined;
+    case 9:
+      return order === 8 ? { type: 'take', dirIndex: 0 } : undefined;
+  }
+};
+
+const blackHoleTakeTetherResponse = (
+  output: Output,
+  num: number,
+  dir: string,
+) => {
+  return {
+    alertText: output.takeDirTetherClockwise!({
+      num: num,
+      dir: output[dir]!(),
+    }),
+  };
+};
+
+const xindeBlackHoleResponse = (
+  data: Data,
+  output: Output,
+  num: number,
+  dirKeys: string[],
+) => {
+  const action = getXindeBlackHoleAction(getMyBlackHoleOrder(data), data.nothingnessCount);
+  if (action === undefined)
+    return;
+  if (action.type === 'keep')
+    return { infoText: output.keepTether!() };
+  if (action.type === 'pass')
+    return { alertText: output.passTether!() };
+  return blackHoleTakeTetherResponse(output, num, dirKeys[action.dirIndex] ?? 'unknown');
+};
+
 const blackHoleOutputStrings: OutputStrings = {
   ...Directions.outputStringsCardinalDir,
   num: {
@@ -1037,6 +1271,11 @@ const pendingNothingnessNum = (data: Data): number => data.nothingnessCount + 1;
 const sortTrineDirNumsByAPointCounterclockwise = (dirNums: number[]): number[] => {
   // A marker is north/12 o'clock. Direction numbers increase clockwise.
   return [...dirNums].sort((a, b) => ((16 - a) % 16) - ((16 - b) % 16));
+};
+
+const sortTrineDirNumsByAPointClockwiseExcludingA = (dirNums: number[]): number[] => {
+  // A marker is north/12 o'clock. Party uses first clockwise trine, but does not use A.
+  return [...dirNums].sort((a, b) => (a === 0 ? 16 : a) - (b === 0 ? 16 : b));
 };
 
 const trineDirNumToOutputKey = (dirNum: number | undefined): string => {
@@ -1144,6 +1383,107 @@ const ultimaBlasterMarkerBetweenOutputStrings: OutputStrings = {
     cn: '1A中间',
   },
   unknown: Outputs.unknown,
+};
+
+const getP3TowerSide = (data: Data): P3TowerSide => {
+  const slot = data.myPartySlot;
+  if (slot === undefined)
+    return 'unknown';
+
+  if (['MT', 'H1', 'D1', 'D3'].includes(slot))
+    return 'left';
+  if (['ST', 'H2', 'D2', 'D4'].includes(slot))
+    return 'right';
+  return 'unknown';
+};
+
+const getP3KnockDownRole = (data: Data, target: string): P3KnockDownRole | undefined => {
+  if (data.party.isDPS(target))
+    return 'dps';
+  if (data.party.isTank(target) || data.party.isHealer(target))
+    return 'support';
+};
+
+const oppositeP3KnockDownRole = (role: P3KnockDownRole): P3KnockDownRole => {
+  return role === 'dps' ? 'support' : 'dps';
+};
+
+const getP3KnockDownAction = (
+  data: Data,
+  output: Output,
+  stackRole: P3KnockDownRole,
+): string => {
+  const myRole: P3KnockDownRole = data.role === 'dps' ? 'dps' : 'support';
+  if (myRole === stackRole)
+    return output.stackMiddle!();
+
+  const side = getP3TowerSide(data);
+  return output.takeTower!({
+    side: output[side]!(),
+  });
+};
+
+const getP3KnockDownCall = (
+  data: Data,
+  output: Output,
+  round: string,
+  stackRole: P3KnockDownRole,
+): string => {
+  return output.roundMech!({
+    round: round,
+    mech: getP3KnockDownAction(data, output, stackRole),
+  });
+};
+
+const getP3KnockDownOrderCall = (
+  data: Data,
+  output: Output,
+  firstStackRole: P3KnockDownRole,
+): string => {
+  return output.knockDownOrder!({
+    first: getP3KnockDownAction(data, output, firstStackRole),
+    second: getP3KnockDownAction(data, output, oppositeP3KnockDownRole(firstStackRole)),
+  });
+};
+
+const p3KnockDownOutputStrings: OutputStrings = {
+  first: {
+    en: 'First',
+    cn: '一轮',
+  },
+  second: {
+    en: 'Second',
+    cn: '二轮',
+  },
+  left: {
+    en: 'Left',
+    cn: '左',
+  },
+  right: {
+    en: 'Right',
+    cn: '右',
+  },
+  outPuddle: {
+    en: 'Out Puddle',
+    cn: '外侧冰圈',
+  },
+  unknown: Outputs.unknown,
+  stackMiddle: {
+    en: 'Stack Middle',
+    cn: '中间分摊',
+  },
+  takeTower: {
+    en: 'Take ${side} Tower',
+    cn: '踩${side}塔',
+  },
+  roundMech: {
+    en: '${round}: ${mech}',
+    cn: '${round}：${mech}',
+  },
+  knockDownOrder: {
+    en: '${first} => ${second}',
+    cn: '${first} => ${second}',
+  },
 };
 
 const triggerSet: TriggerSet<Data> = {
@@ -1305,8 +1645,8 @@ const triggerSet: TriggerSet<Data> = {
     {
       id: 'blackhole',
       comment: {
-        en: 'Kefkabin: #1 DPS, #1 Support, #1 Accretion, #2 DPS, #2 Support, #2 Accretion, #3 DPS, #3 Support',
-        cn: 'Kefkabin：1DPS、1TH、1泥土、2DPS、2TH、2泥土、3DPS、3TH',
+        en: 'Xinde: suggest your marker by T/D/H priority, then refresh from your actual sign marker at first Black Hole',
+        cn: '心得：点名时按T/D/H优先级提示自己该标几，第一次黑洞出现时按自己实际头标刷新',
       },
       name: {
         en: 'P3 Black Hole Order',
@@ -1315,15 +1655,17 @@ const triggerSet: TriggerSet<Data> = {
       type: 'select',
       options: {
         en: {
+          'Xinde Manual Markers': 'xinde',
           'Kefkabin': 'kefka',
           'Generic Calls': 'none',
         },
         cn: {
+          '心得手摇': 'xinde',
           'Kefkabin': 'kefka',
           '通用播报': 'none',
         },
       },
-      default: 'none',
+      default: 'xinde',
     },
   ],
   timelineFile: 'dancing_mad.txt',
@@ -1348,8 +1690,8 @@ const triggerSet: TriggerSet<Data> = {
       pathOfLightSpreadPlayers: [],
       pathOfLightMarkerByPlayer: {},
       pathOfLightAssignmentByPlayer: {},
-      pathOfLightStackCombatants: [],
-      pathOfLightConeCombatants: [],
+      pathOfLightStackRelativeOutputByPlayer: {},
+      pathOfLightConeRelativeOutputByPlayer: {},
       partySlotByPlayer: {},
       partySlotAssignments: {},
       trineDirNums: [],
@@ -1362,6 +1704,9 @@ const triggerSet: TriggerSet<Data> = {
       blackHoleIdDirNums: {},
       nothingnessCount: 0,
       blackHoleTetherDirNums: [],
+      p3IsSecondPuddle: false,
+      p3IsKnockDown2: false,
+      p3BlizzardStarted: false,
     };
   },
   triggers: [
@@ -2377,6 +2722,29 @@ const triggerSet: TriggerSet<Data> = {
       },
     },
     {
+      id: 'DMU P2 Path of Light Relative Position Collector',
+      type: 'HeadMarker',
+      netRegex: {
+        id: [
+          headMarkerData['stackPath'],
+          headMarkerData['conePath'],
+          headMarkerData['spreadPath'],
+        ],
+        capture: true,
+      },
+      delaySeconds: 0.15, // Delay for party headmarker collect and assignment update.
+      promise: async (data, matches) => {
+        if (data.myPathOfLightAssignment === undefined)
+          updatePathOfLightAssignments(data);
+
+        const group = data.pathOfLightAssignmentByPlayer[matches.target]?.group;
+        if (group === undefined || group === 'unknown')
+          return;
+
+        await collectPathOfLightRelativeOutputsForGroup(data, group);
+      },
+    },
+    {
       id: 'DMU P2 Path of Light Towers 1',
       // First Tower:
       // 2 Soak markers
@@ -2521,7 +2889,6 @@ const triggerSet: TriggerSet<Data> = {
       condition: (data) =>
         data.pathOfLightCounter === 3 && data.myPathOfLightAssignment?.group === '1238',
       suppressSeconds: 1,
-      promise: collectPathOfLightStackCombatants,
       alertText: (data, _matches, output) => {
         const call = getStealFireOddTowerOutput(data);
         return output[call]!();
@@ -2613,9 +2980,8 @@ const triggerSet: TriggerSet<Data> = {
       condition: (data) =>
         data.pathOfLightCounter === 5 && data.myPathOfLightAssignment?.group === '4567',
       suppressSeconds: 1,
-      promise: collectPathOfLightStackCombatants,
       alertText: (data, _matches, output) => {
-        const call = getStealFireOddTowerOutput(data);
+        const call = getStealFireOddTowerOutput(data, 'rightTowerOutsideRightStack');
         return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
@@ -2628,7 +2994,6 @@ const triggerSet: TriggerSet<Data> = {
       condition: (data) =>
         data.pathOfLightCounter === 5 && data.myPathOfLightAssignment?.group === '1238',
       suppressSeconds: 1,
-      promise: collectPathOfLightConeCombatants,
       alertText: (data, _matches, output) => {
         const call = getStealFireTowerOneOutputWithConeRelative(
           data,
@@ -2720,9 +3085,8 @@ const triggerSet: TriggerSet<Data> = {
       condition: (data) =>
         data.pathOfLightCounter === 7 && data.myPathOfLightAssignment?.group === '4567',
       suppressSeconds: 1,
-      promise: collectPathOfLightStackCombatants,
       alertText: (data, _matches, output) => {
-        const call = getStealFireOddTowerOutput(data);
+        const call = getStealFireOddTowerOutput(data, 'rightTowerOutsideRightStack');
         return output[call]!();
       },
       outputStrings: forsakenOutputStrings,
@@ -2735,7 +3099,6 @@ const triggerSet: TriggerSet<Data> = {
       condition: (data) =>
         data.pathOfLightCounter === 7 && data.myPathOfLightAssignment?.group === '1238',
       suppressSeconds: 1,
-      promise: collectPathOfLightConeCombatants,
       alertText: (data, _matches, output) => {
         const call = getStealFireTowerOneOutputWithConeRelative(
           data,
@@ -2836,20 +3199,21 @@ const triggerSet: TriggerSet<Data> = {
       durationSeconds: 12,
       suppressSeconds: 99999,
       infoText: (data, _matches, output) => {
-        const sorted = sortTrineDirNumsByAPointCounterclockwise(data.trineDirNums);
-        const tankDir = trineDirNumToOutputKey(sorted[0]);
-        const partyDir = trineDirNumToOutputKey(sorted[1]);
+        const tankSorted = sortTrineDirNumsByAPointCounterclockwise(data.trineDirNums);
+        const partySorted = sortTrineDirNumsByAPointClockwiseExcludingA(data.trineDirNums);
+        const dir = data.role === 'tank'
+          ? trineDirNumToOutputKey(tankSorted[0])
+          : trineDirNumToOutputKey(partySorted[0]);
 
-        return output.safeSpots!({
-          tank: output[tankDir]!(),
-          party: output[partyDir]!(),
+        return output.safeSpot!({
+          dir: output[dir]!(),
         });
       },
       outputStrings: {
         ...Directions.outputStrings16Dir,
-        safeSpots: {
-          en: 'Later: Tanks ${tank}; ${party}',
-          cn: '稍后：双T ${tank}；${party}',
+        safeSpot: {
+          en: 'Later: ${dir}',
+          cn: '稍后：${dir}',
         },
       },
     },
@@ -2876,9 +3240,10 @@ const triggerSet: TriggerSet<Data> = {
       type: 'StartsUsing',
       netRegex: { id: 'C487', source: 'Kefka', capture: false },
       alertText: (data, _matches, output) => {
-        const sorted = sortTrineDirNumsByAPointCounterclockwise(data.trineDirNums);
-        const tankDir = trineDirNumToOutputKey(sorted[0]);
-        const partyDir = trineDirNumToOutputKey(sorted[1]);
+        const tankSorted = sortTrineDirNumsByAPointCounterclockwise(data.trineDirNums);
+        const partySorted = sortTrineDirNumsByAPointClockwiseExcludingA(data.trineDirNums);
+        const tankDir = trineDirNumToOutputKey(tankSorted[0]);
+        const partyDir = trineDirNumToOutputKey(partySorted[0]);
 
         if (data.myPartySlot === 'MT')
           return output.tankBait!({
@@ -4088,6 +4453,11 @@ const triggerSet: TriggerSet<Data> = {
         const num = effectToNum[matches.effectId];
         if (num === undefined)
           return;
+        if (matches.target === data.me) {
+          delete data.myBlackHoleWaymark;
+          delete data.myBlackHoleMarker;
+          delete data.mySuggestedBlackHoleMarker;
+        }
         data.inLine[matches.target] = num;
       },
     },
@@ -4124,10 +4494,43 @@ const triggerSet: TriggerSet<Data> = {
       delaySeconds: 0.2,
       durationSeconds: 5,
       suppressSeconds: 1,
+      run: (data) => {
+        if (data.triggerSetConfig.blackhole !== 'xinde')
+          return;
+        const marker = getSuggestedBlackHoleMarker(data);
+        if (marker !== undefined)
+          data.mySuggestedBlackHoleMarker = marker;
+      },
       infoText: (data, _matches, output) => {
         const myNum = data.inLine[data.me];
         if (myNum === undefined)
           return;
+
+        if (data.triggerSetConfig.blackhole === 'xinde') {
+          const marker = getSuggestedBlackHoleMarker(data);
+          if (marker !== undefined)
+            data.mySuggestedBlackHoleMarker = marker;
+          const markerText = marker === undefined ? output.unknown!() : output[marker]!();
+
+          if (data.role !== 'healer')
+            return output.xindeMarker!({ num: myNum, marker: markerText });
+
+          const first = data.firstAccretion;
+          const second = data.secondAccretion;
+          const player1 = first === data.me
+            ? output.you!()
+            : data.party.member(first);
+          const player2 = second === data.me
+            ? output.you!()
+            : data.party.member(second);
+
+          return output.xindeMarkerAccretionHealer!({
+            num: myNum,
+            marker: markerText,
+            player1: player1,
+            player2: player2,
+          });
+        }
 
         // Let healers know Accretion order
         // String may be too long to provide list of partners
@@ -4175,6 +4578,47 @@ const triggerSet: TriggerSet<Data> = {
           en: '${num}: Accretion on ${player1} => ${player2}',
           cn: '${num}: 泥土 ${player1} => ${player2}',
         },
+        xindeMarker: {
+          en: '${num}: Mark ${marker}',
+          cn: '${num}麻：标${marker}',
+        },
+        xindeMarkerAccretionHealer: {
+          en: '${num}: Mark ${marker} / Accretion ${player1} => ${player2}',
+          cn: '${num}麻：标${marker} / 泥土 ${player1} => ${player2}',
+        },
+        attack1: {
+          en: 'Attack 1',
+          cn: '攻击1',
+        },
+        attack2: {
+          en: 'Attack 2',
+          cn: '攻击2',
+        },
+        attack3: {
+          en: 'Attack 3',
+          cn: '攻击3',
+        },
+        bind1: {
+          en: 'Bind 1',
+          cn: '锁链1',
+        },
+        bind2: {
+          en: 'Bind 2',
+          cn: '锁链2',
+        },
+        bind3: {
+          en: 'Bind 3',
+          cn: '锁链3',
+        },
+        ignore1: {
+          en: 'Ignore 1',
+          cn: '禁止1',
+        },
+        ignore2: {
+          en: 'Ignore 2',
+          cn: '禁止2',
+        },
+        unknown: Outputs.unknown,
       },
     },
     {
@@ -4188,6 +4632,33 @@ const triggerSet: TriggerSet<Data> = {
         // There is no one else it could be but second
         else
           delete data.secondAccretion;
+      },
+    },
+    {
+      id: 'DMU P3 Black Hole Xinde Target Marker Tracker',
+      type: 'NetworkTargetMarker',
+      netRegex: { operation: ['Add', 'Update', 'Delete'], capture: true },
+      condition: (data, matches) => {
+        const targetName = matches.targetName === ''
+          ? data.party.idToName_[matches.targetId]
+          : matches.targetName;
+        return data.phase === 'p3' &&
+          data.triggerSetConfig.blackhole === 'xinde' &&
+          targetName === data.me;
+      },
+      run: (data, matches) => {
+        if (matches.operation === 'Delete') {
+          delete data.myBlackHoleWaymark;
+          delete data.myBlackHoleMarker;
+          return;
+        }
+
+        data.myBlackHoleWaymark = matches.waymark;
+        const marker = getBlackHoleMarkerFromNetwork(data, matches.waymark);
+        if (marker !== undefined)
+          data.myBlackHoleMarker = marker;
+        else
+          delete data.myBlackHoleMarker;
       },
     },
     {
@@ -4419,6 +4890,7 @@ const triggerSet: TriggerSet<Data> = {
           return false;
         return data.phase === 'p3' && data.nothingnessCount === 0;
       },
+      delaySeconds: (data) => data.triggerSetConfig.blackhole === 'xinde' ? 0.1 : 0,
       suppressSeconds: 99999,
       response: (data, matches, output) => {
         // cactbot-builtin-response
@@ -4430,6 +4902,9 @@ const triggerSet: TriggerSet<Data> = {
         const dir = dirNum === undefined
           ? 'unknown'
           : Directions.outputCardinalDir[dirNum] ?? 'unknown';
+
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(data, output, num, [dir]);
 
         if (
           config === 'kefka' && data.inLine[data.me] === 1 &&
@@ -4478,6 +4953,9 @@ const triggerSet: TriggerSet<Data> = {
         const dir2 = sorted[1] !== undefined
           ? Directions.outputCardinalDir[sorted[1]] ?? 'unknown'
           : 'unknown';
+
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(data, output, num, [dir1, dir2]);
 
         if (
           config === 'kefka' && data.inLine[data.me] === 1 &&
@@ -4541,6 +5019,9 @@ const triggerSet: TriggerSet<Data> = {
           ? Directions.outputCardinalDir[sorted[2]] ?? 'unknown'
           : 'unknown';
 
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(data, output, num, [dir1, dir2, dir3]);
+
         if (config === 'kefka' && data.inLine[data.me] === 1) {
           if (data.hadAccretion)
             return {
@@ -4594,6 +5075,14 @@ const triggerSet: TriggerSet<Data> = {
         const hadAccretion = data.hadAccretion;
         const line = data.inLine[data.me];
 
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(
+            data,
+            output,
+            pendingNothingnessNum(data),
+            getSortedBlackHoleDirKeys(data),
+          );
+
         if (config === 'kefka') {
           if (line === 1) {
             if (hadAccretion || (data.role !== 'dps'))
@@ -4617,7 +5106,7 @@ const triggerSet: TriggerSet<Data> = {
             // We could get the player they are taking from, but seems unnecessary at the time
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: pendingNothingnessNum(data),
                 dir: output[dir]!(),
               }),
             };
@@ -4644,6 +5133,14 @@ const triggerSet: TriggerSet<Data> = {
         const hadAccretion = data.hadAccretion;
         const line = data.inLine[data.me];
 
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(
+            data,
+            output,
+            pendingNothingnessNum(data),
+            getSortedBlackHoleDirKeys(data),
+          );
+
         if (config === 'kefka') {
           if (line === 1) {
             if (hadAccretion)
@@ -4668,7 +5165,7 @@ const triggerSet: TriggerSet<Data> = {
               // We could get the player they are taking from, but seems unnecessary at the time
               return {
                 alertText: output.takeDirTetherClockwise!({
-                  num: data.nothingnessCount,
+                  num: pendingNothingnessNum(data),
                   dir: output[dir]!(),
                 }),
               };
@@ -4712,6 +5209,9 @@ const triggerSet: TriggerSet<Data> = {
         const dir3 = sorted[2] !== undefined
           ? Directions.outputCardinalDir[sorted[2]] ?? 'unknown'
           : 'unknown';
+
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(data, output, num, [dir1, dir2, dir3]);
 
         if (config === 'kefka' && data.inLine[data.me] === 2) {
           if (data.hadAccretion)
@@ -4765,6 +5265,14 @@ const triggerSet: TriggerSet<Data> = {
         const config = data.triggerSetConfig.blackhole;
         const line = data.inLine[data.me];
 
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(
+            data,
+            output,
+            pendingNothingnessNum(data),
+            getSortedBlackHoleDirKeys(data),
+          );
+
         if (config === 'kefka') {
           if (line === 2) {
             if (data.hadAccretion || data.role !== 'dps')
@@ -4788,7 +5296,7 @@ const triggerSet: TriggerSet<Data> = {
             // We could get the player they are taking from, but seems unnecessary at the time
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: pendingNothingnessNum(data),
                 dir: output[dir]!(),
               }),
             };
@@ -4813,6 +5321,14 @@ const triggerSet: TriggerSet<Data> = {
 
         const config = data.triggerSetConfig.blackhole;
         const line = data.inLine[data.me];
+
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(
+            data,
+            output,
+            pendingNothingnessNum(data),
+            getSortedBlackHoleDirKeys(data),
+          );
 
         if (config === 'kefka') {
           if (line === 2) {
@@ -4840,7 +5356,7 @@ const triggerSet: TriggerSet<Data> = {
             // We could get the player they are taking from, but seems unnecessary at the time
             return {
               alertText: output.takeDirTetherClockwise!({
-                num: data.nothingnessCount,
+                num: pendingNothingnessNum(data),
                 dir: output[dir]!(),
               }),
             };
@@ -4878,6 +5394,9 @@ const triggerSet: TriggerSet<Data> = {
         const dir2 = sorted[1] !== undefined
           ? Directions.outputCardinalDir[sorted[1]] ?? 'unknown'
           : 'unknown';
+
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(data, output, num, [dir1, dir2]);
 
         if (config === 'kefka' && data.inLine[data.me] === 3) {
           if (data.role === 'dps')
@@ -4925,6 +5444,9 @@ const triggerSet: TriggerSet<Data> = {
           ? 'unknown'
           : Directions.outputCardinalDir[dirNum] ?? 'unknown';
 
+        if (config === 'xinde')
+          return xindeBlackHoleResponse(data, output, num, [dir]);
+
         if (
           config === 'kefka' && data.inLine[data.me] === 3 &&
           data.role !== 'dps'
@@ -4945,31 +5467,86 @@ const triggerSet: TriggerSet<Data> = {
     },
     {
       id: 'DMU P3 Blizzard III Puddles',
-      // TODO: Get which role is doing stack + player, and which role is doing towers
       type: 'StartsUsing',
       netRegex: { id: 'BB0F', source: 'Exdeath', capture: false },
-      infoText: (_data, _matches, output) => {
-        return output.puddlesThenMech!({
-          bait: output.baitPuddles!(),
-          mech1: output.roleStack!(),
-          mech2: output.getTowers!(),
+      condition: (data) => data.phase === 'p3',
+      infoText: (_data, _matches, output) => output.text!(),
+      outputStrings: {
+        text: {
+          en: 'Bait Puddles Middle => Out',
+          cn: '中间放冰圈 => 外侧放冰圈',
+        },
+      },
+    },
+    {
+      id: 'DMU P3 Knock Down Collect',
+      type: 'HeadMarker',
+      netRegex: { id: headMarkerData['stompStack'], capture: true },
+      condition: (data) => data.phase === 'p3',
+      run: (data, matches) => data.p3KnockDownTarget = matches.target,
+    },
+    {
+      id: 'DMU P3 Knock Down 1 Early',
+      type: 'HeadMarker',
+      netRegex: { id: headMarkerData['stompStack'], capture: true },
+      condition: (data) => data.phase === 'p3',
+      durationSeconds: 2.6,
+      suppressSeconds: 99999,
+      infoText: (data, matches, output) => {
+        const stackRole = getP3KnockDownRole(data, matches.target);
+        if (stackRole === undefined)
+          return;
+        return output.knockDownOrder!({
+          first: output.outPuddle!(),
+          second: getP3KnockDownAction(data, output, stackRole),
         });
       },
-      outputStrings: {
-        roleStack: {
-          en: 'Role Stack',
-          cn: '职能分摊',
-        },
-        getTowers: Outputs.getTowers,
-        puddlesThenMech: {
-          en: '${bait} => ${mech1}/${mech2}',
-          cn: '${bait} => ${mech1}/${mech2}',
-        },
-        baitPuddles: {
-          en: 'Bait Puddles x2',
-          cn: '引导冰圈x2',
-        },
+      outputStrings: p3KnockDownOutputStrings,
+    },
+    {
+      id: 'DMU P3 Knock Down 1 State',
+      type: 'Ability',
+      netRegex: { id: 'BB02', source: 'Chaos', capture: false },
+      condition: (data) => data.phase === 'p3',
+      suppressSeconds: 99999,
+      run: (data) => data.p3IsKnockDown2 = true,
+    },
+    {
+      id: 'DMU P3 Knock Down 1',
+      type: 'StartsUsing',
+      netRegex: { id: 'BB0D', source: ['Exdeath', 'Kefka'], capture: false },
+      condition: (data) => data.phase === 'p3',
+      durationSeconds: 2.8,
+      suppressSeconds: 1,
+      alertText: (data, _matches, output) => {
+        if (!data.p3IsSecondPuddle) {
+          data.p3IsSecondPuddle = true;
+          return;
+        }
+
+        const target = data.p3KnockDownTarget;
+        if (target === undefined)
+          return;
+
+        const firstStackRole = getP3KnockDownRole(data, target);
+        if (firstStackRole === undefined)
+          return;
+        return getP3KnockDownOrderCall(data, output, firstStackRole);
       },
+      outputStrings: p3KnockDownOutputStrings,
+    },
+    {
+      id: 'DMU P3 Knock Down 2',
+      type: 'HeadMarker',
+      netRegex: { id: headMarkerData['stompStack'], capture: true },
+      condition: (data) => data.phase === 'p3' && data.p3IsKnockDown2,
+      alertText: (data, matches, output) => {
+        const stackRole = getP3KnockDownRole(data, matches.target);
+        if (stackRole === undefined)
+          return;
+        return getP3KnockDownCall(data, output, output.second!(), stackRole);
+      },
+      outputStrings: p3KnockDownOutputStrings,
     },
     {
       id: 'DMU P3 Stomp-a-Mole Direction',
@@ -4986,19 +5563,61 @@ const triggerSet: TriggerSet<Data> = {
       outputStrings: {
         ...Directions.outputStrings8Dir,
         text: {
-          en: '${dir} Kefka',
-          cn: '${dir}凯夫卡',
+          en: '${dir} Kefka 12 o\'clock',
+          cn: '以${dir}凯夫卡为12点',
         },
       },
     },
     {
-      id: 'DMU P3 Blizzard III Keep Moving',
+      id: 'DMU P3 Blizzard III State',
+      type: 'StartsUsing',
+      netRegex: { id: 'BB11', source: 'Exdeath', capture: false },
+      condition: (data) => data.phase === 'p3',
+      run: (data) => data.p3BlizzardStarted = true,
+    },
+    {
+      id: 'DMU P3 Blizzard III Keep Moving Tower Role',
       // In order to avoid 3s D98 Deep Freeze
       // Players also need to avoid BB05 Big Bang at this time as well
       // BB05 Big Bang goes off at the stack locations
       type: 'StartsUsing',
       netRegex: { id: 'BB11', source: 'Exdeath', capture: true },
+      condition: (data) => {
+        if (data.phase !== 'p3')
+          return false;
+
+        const target = data.p3KnockDownTarget;
+        if (target === undefined)
+          return true;
+
+        const stackRole = getP3KnockDownRole(data, target);
+        const myRole: P3KnockDownRole = data.role === 'dps' ? 'dps' : 'support';
+        return stackRole !== undefined && stackRole !== myRole;
+      },
       durationSeconds: (_data, matches) => parseFloat(matches.castTime),
+      infoText: (_data, _matches, output) => output.keepMoving!(),
+      outputStrings: {
+        keepMoving: Outputs.moveAround,
+      },
+    },
+    {
+      id: 'DMU P3 Blizzard III Keep Moving Stack Role',
+      type: 'Ability',
+      netRegex: { id: 'BB03', source: 'Chaos', capture: false },
+      condition: (data) => {
+        if (data.phase !== 'p3' || !data.p3BlizzardStarted)
+          return false;
+
+        const target = data.p3KnockDownTarget;
+        if (target === undefined)
+          return false;
+
+        const stackRole = getP3KnockDownRole(data, target);
+        const myRole: P3KnockDownRole = data.role === 'dps' ? 'dps' : 'support';
+        return stackRole !== undefined && stackRole === myRole;
+      },
+      durationSeconds: 3.2,
+      suppressSeconds: 1,
       infoText: (_data, _matches, output) => output.keepMoving!(),
       outputStrings: {
         keepMoving: Outputs.moveAround,
